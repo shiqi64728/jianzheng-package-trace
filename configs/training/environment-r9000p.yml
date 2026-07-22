@@ -1,0 +1,31 @@
+name: jianzhen-training
+channels:
+  - defaults
+dependencies:
+  - python=3.12.13
+  - pip=25.0
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu130
+      - torch==2.13.0+cu130
+      - torchvision==0.28.0+cu130
+      - numpy==2.4.4
+      - scipy==1.18.0
+      - pandas==3.0.3
+      - scikit-learn==1.9.0
+      - opencv-python==5.0.0.93
+      - pillow==12.2.0
+      - matplotlib==3.11.1
+      - albumentations==2.0.8
+      - pyyaml==6.0.3
+      - tqdm==4.69.0
+      - rich==15.0.0
+      - psutil==7.2.2
+      - tensorboard==2.21.0
+      - ultralytics==8.4.102
+      - onnx==1.22.0
+      - onnxscript==0.7.1
+      - onnxruntime==1.27.0
+      - pytest==9.1.1
+      - ruff==0.15.22
+      - jupyterlab==4.6.1
+      - ipykernel==7.3.0

@@ -1,0 +1,148 @@
+件证项目 R9000P 主训练机环境报告
+==================================
+
+审计/配置日期：2026-07-19；清理后复验日期：2026-07-22
+主机：LENOVO 83LV（BIOS RLCN29WW）
+操作系统：Microsoft Windows 11 家庭版 中文版，10.0.26200，64-bit
+CPU：AMD Ryzen 9 8945HX with Radeon Graphics，32 logical processors
+内存：31.3 GiB
+内置盘：UMIS RPJYJ1T24MML1AWY，NVMe，Healthy
+GPU：NVIDIA GeForce RTX 5060 Laptop GPU，8151 MiB
+驱动：582.05；nvidia-smi compute capability：12.0
+
+一、仓库
+--------
+
+正式仓库：https://github.com/shiqi64728/jianzheng-package-trace.git
+指定路径：E:\Artificial-intelegence-training
+当前分支：feat/training-complete-environment
+报告写入前 HEAD：f6ac4d028ef468bb41b5b933049cf0ca44706719
+仓库级 Git 代理：http://127.0.0.1:7890
+
+2026-07-22 接续时，卷标 Elements、容量 931.51 GiB 的外置 E: 盘曾短暂未被系统枚举；08:38 后恢复为 E:。恢复后验证仓库顶层路径、origin、分支、HEAD 与工作树均正常；工作树只包含本轮预期的未跟踪配置/报告文件。
+
+二、工具与隔离原则
+------------------
+
+Git：2.54.0.windows.1（系统安装，保留）
+Git LFS：3.7.1（系统安装，保留）
+Visual Studio Code：1.108.1
+路径：D:\下载的应用\Microsoft VS Code\Code.exe
+签名：Valid
+PyCharm：2024.1.7，build 241.19416.19
+路径：D:\下载的应用\pycharm\PyCharm 2024.1.7\bin\pycharm64.exe
+签名：Valid
+
+未安装系统级 CUDA Toolkit 或系统级 cuDNN。PyTorch 使用官方 wheel 内置 CUDA Runtime。未修改用户/机器 PATH，未执行 conda init，未注册 Miniconda 为默认 Python，auto_activate_base=false。
+
+三、Miniconda 与正式环境
+----------------------
+
+官方安装器：https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe
+官方 SHA-256：2D4A6CDCAA60F5A3C67BE17CDD8CC53C835EE00B7973D0E3D6AB5E0A8177524E
+签名：Valid（Anaconda, Inc.）
+
+含中文的原目标路径被官方安装器拒绝。经用户明确授权，Miniconda 根目录改为 ASCII 路径：
+D:\JianzhenApps\Miniconda3
+
+Conda：26.5.3
+base Python：3.14.6
+正式环境名：jianzhen-training
+正式 Python：D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe
+Python：3.12.13，64-bit
+pip：25.0
+
+缓存路径：
+D:\下载的应用\Caches\pip
+D:\下载的应用\Caches\conda-pkgs
+D:\下载的应用\Caches\torch
+D:\下载的应用\Caches\huggingface
+D:\下载的应用\Caches\ultralytics
+
+四、PyTorch 与 CUDA
+------------------
+
+查询日期：2026-07-19
+来源：
+https://pytorch.org/get-started/locally/
+https://pytorch.org/blog/pytorch-2-13-release-blog/
+https://download.pytorch.org/whl/cu130
+
+安装组合：
+torch==2.13.0+cu130
+torchvision==0.28.0+cu130
+CUDA Runtime：13.0
+cuDNN：92000
+
+安装命令：
+python -m pip install torch==2.13.0 torchvision==0.28.0 --index-url https://download.pytorch.org/whl/cu130
+
+2026-07-22 清理后复验：
+cuda_available=True
+device=NVIDIA GeForce RTX 5060 Laptop GPU
+compute_capability=(12, 0)
+arch_list=[sm_75, sm_80, sm_86, sm_90, sm_100, sm_120]
+GPU forward/backward=PASS
+
+五、训练与开发包
+----------------
+
+numpy==2.4.4
+scipy==1.18.0
+pandas==3.0.3
+scikit-learn==1.9.0
+opencv-python==5.0.0.93
+pillow==12.2.0
+matplotlib==3.11.1
+albumentations==2.0.8
+pyyaml==6.0.3
+tqdm==4.69.0
+rich==15.0.0
+psutil==7.2.2
+tensorboard==2.21.0
+ultralytics==8.4.102
+onnx==1.22.0
+onnxscript==0.7.1
+onnxruntime==1.27.0
+pytest==9.1.1
+ruff==0.15.22
+jupyterlab==4.6.1
+ipykernel==7.3.0
+
+pip check：PASS（No broken requirements found）
+核心导入：PASS
+
+六、ONNX 验证
+-------------
+
+模型：本地随机初始化的两层小型 Linear/ReLU 网络；不下载模型。
+导出：torch.onnx.export，opset 18
+检查：onnx.checker.check_model PASS
+推理：ONNX Runtime CPUExecutionProvider PASS
+最大绝对误差：2.9802322387695312e-08
+临时目录删除：PASS
+
+七、IDE
+-------
+
+VS Code 已安装并验证：
+ms-python.python@2026.4.0
+ms-python.vscode-pylance@2026.2.1
+ms-python.vscode-python-envs@1.20.1
+ms-toolsai.jupyter@2025.9.1
+
+2026-07-19 和 2026-07-22 均在 E: 项目内实际新建终端；解释器为正式环境，Python 3.12.13、torch 2.13.0+cu130、CUDA True。工作区通过进程级 -ExecutionPolicy Bypass 解决 Conda hook 的 PowerShell 执行策略限制，未修改全局策略。
+
+PyCharm 的 Conda 向导与 Conda 26.5.3 存在兼容错误（lateinit property envs_dirs has not been initialized），故以 System Interpreter 方式选择同一个 Conda 环境的精确 python.exe。2026-07-19 和 2026-07-22 PyCharm Terminal 实测解释器、Python、torch 和 CUDA 均通过。项目 `misc.xml` 指向 `Python 3.12`，全局 SDK 表中该节点的 homePath 精确指向正式环境；旧 Python 3.9 SDK 因个人项目引用而并存保留。
+
+八、旧 Python
+------------
+
+D:\Python\python.exe 是 Python 3.9.5，约 1,170.41 MiB。最终引用审计发现多个真实个人项目使用 Python 3.9 SDK，且 D:\A_所有资料集\APython学习\Python代码\重连\.venv\pyvenv.cfg 明确指向 D:\python\python.exe。开始菜单与 PyCharm 全局 SDK 也仍引用。
+
+结论：旧 Python 必须保留；未卸载、未隔离、未修改 SDK、未删除快捷方式。
+
+九、清理后结论
+--------------
+
+清理后 Python、pip check、核心导入、GPU 正反向传播、ONNX CPU 推理、PyCharm Terminal、VS Code Terminal 和仓库复验均通过。三个已校验 Miniconda 安装器硬链接已删除，实际释放 130,747,768 B。未卸载任何软件，未删除或隔离任何用途不明项。
