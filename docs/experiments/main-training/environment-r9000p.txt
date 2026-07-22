@@ -33,7 +33,7 @@ PyCharm：2024.1.7，build 241.19416.19
 路径：D:\下载的应用\pycharm\PyCharm 2024.1.7\bin\pycharm64.exe
 签名：Valid
 
-未安装系统级 CUDA Toolkit 或系统级 cuDNN。PyTorch 使用官方 wheel 内置 CUDA Runtime。未修改用户/机器 PATH，未执行 conda init，未注册 Miniconda 为默认 Python，auto_activate_base=false。
+未安装系统级 CUDA Toolkit 或系统级 cuDNN。PyTorch 使用官方 wheel 内置 CUDA Runtime。未修改机器 PATH，未执行 conda init，未注册 Miniconda 为默认 Python，auto_activate_base=false。2026-07-22 仅在用户 PATH 追加 VS Code `bin`、PyCharm `bin` 与 Miniconda `condabin`；没有加入 Miniconda 根目录、`Scripts` 或任何项目环境目录，因此全局 `python` 仍解析到 WindowsApps，而不是项目解释器。
 
 三、Miniconda 与正式环境
 ----------------------
@@ -127,8 +127,8 @@ pip check：PASS（No broken requirements found）
 
 VS Code 已安装并验证：
 ms-python.python@2026.4.0
-ms-python.vscode-pylance@2026.2.1
-ms-python.vscode-python-envs@1.20.1
+ms-python.vscode-pylance@2026.3.1
+ms-python.vscode-python-envs@1.20.1（固定版本，pinned=True）
 ms-toolsai.jupyter@2025.9.1
 
 2026-07-19 和 2026-07-22 均在 E: 项目内实际新建终端；解释器为正式环境，Python 3.12.13、torch 2.13.0+cu130、CUDA True。工作区通过进程级 -ExecutionPolicy Bypass 解决 Conda hook 的 PowerShell 执行策略限制，未修改全局策略。
@@ -145,4 +145,18 @@ D:\Python\python.exe 是 Python 3.9.5，约 1,170.41 MiB。最终引用审计发
 九、清理后结论
 --------------
 
-清理后 Python、pip check、核心导入、GPU 正反向传播、ONNX CPU 推理、PyCharm Terminal、VS Code Terminal 和仓库复验均通过。三个已校验 Miniconda 安装器硬链接已删除，实际释放 130,747,768 B。未卸载任何软件，未删除或隔离任何用途不明项。
+清理后 Python、pip check、核心导入、GPU 正反向传播、ONNX CPU 推理、PyCharm Terminal、VS Code Terminal 和仓库复验均通过。三个已校验 Miniconda 安装器硬链接已删除，实际释放 130,747,768 B。另删除两个经版本、日志、进程和逐文件 SHA-256 证据确认的 VS Code 过期扩展目录，净减少 103,510,877 B；可核算净清理总量为 3,685,940,775 B（3.433 GiB）。未卸载任何独立软件主程序，未删除或隔离任何用途不明项。
+
+十、用户级全局工具与重复扩展复验
+--------------------------------
+
+用户 PATH 新增并验证：
+- `D:\下载的应用\Microsoft VS Code\bin`，`code` 解析到 `code.cmd`；
+- `D:\下载的应用\pycharm\PyCharm 2024.1.7\bin`，`pycharm64` 解析到 `pycharm64.exe`；
+- `D:\JianzhenApps\Miniconda3\condabin`，`conda` 解析到 `conda.bat`。
+
+机器 PATH 未修改；用户 PATH 经不区分大小写去重后共 9 项。新进程验证 `code --version` 为 1.108.1、`conda --version` 为 26.5.3，`conda run -n jianzhen-training python` 精确进入正式环境；裸 `python` 仍为 WindowsApps 别名，保持项目 Python 隔离。
+
+VS Code 清理前对 `ms-python.vscode-pylance-2026.2.1` 和不兼容的 `ms-python.vscode-python-envs-1.36.0-win32-x64` 共 7,760 个文件、103,510,877 B 完成 SHA-256 清单。Pylance 2026.2.1 已被 `.obsolete` 标记且已有 2026.3.1 替代；Python Environments 1.36.0 要求 `^1.110.0-20260204`，与 Code 1.108.1 不兼容。后者曾被自动更新重新生成，随后通过 VS Code 官方 CLI 卸载扩展、精确安装 `ms-python.vscode-python-envs@1.20.1` 并固定版本，再对重生成目录重新计算 SHA-256 后删除。
+
+最终复验只有 Pylance 2026.3.1 和 Python Environments 1.20.1；Python Environments 注册记录仅 1 条且 `pinned=True`，两个过期目录均不存在。2026-07-22 13:03 的 VS Code 与 PyCharm 真实集成终端再次输出正式解释器、Python 3.12.13、torch 2.13.0+cu130 和 CUDA True。

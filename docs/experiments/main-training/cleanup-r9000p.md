@@ -17,7 +17,7 @@
 | C: | 188.02 GiB free | 190.59 GiB free | +2.57 GiB |
 | D: | 223.67 GiB free | 218.38 GiB free | -5.29 GiB |
 
-D: 的总体净减少包含新安装的 Miniconda、Python 3.12 环境、PyTorch CUDA wheels 和训练工具，不能把配置前后差值当作“清理量”。按清理目标前后文件大小直接核算，本次清理恢复 C: 877,925,201 B（837.25 MiB），D: 2,704,504,697 B（2,579.22 MiB），合计 3,582,429,898 B（3.336 GiB）。
+D: 的总体净减少包含新安装的 Miniconda、Python 3.12 环境、PyTorch CUDA wheels 和训练工具，不能把配置前后差值当作“清理量”。按清理目标前后文件大小直接核算，首轮清理恢复 C: 877,925,201 B（837.25 MiB）、D: 2,704,504,697 B（2,579.22 MiB）；本轮再从 C: 净移除 103,510,877 B（98.72 MiB）的已验证 VS Code 过期扩展，累计可核算净清理量为 3,685,940,775 B（3.433 GiB）。
 
 ## 3. 永久删除内容
 
@@ -30,12 +30,14 @@ D: 的总体净减少包含新安装的 Miniconda、Python 3.12 环境、PyTorch
 | 2026-07-22 | `C:\Users\35001\AppData\Local\Temp` | 未占用临时文件 | 229 deleted、15 skipped | 10,586,059 B | A 类临时文件；逐文件删除 | 不提供备份，可由应用重建 |
 | 2026-07-22 | `C:\Users\35001\AppData\Local\CrashDumps` | 崩溃转储 | 1 | 1,215,933 B | A 类诊断残留 | 不提供备份 |
 | 2026-07-22 | 三个 Miniconda 安装器硬链接（见下） | 官方安装器 | 3 links / 1 physical file | 130,747,768 B | 安装、环境、GPU 和两个 IDE 均复验成功；哈希/签名一致 | 从 Anaconda 官方地址重新下载并核验 |
+| 2026-07-22 | `C:\Users\35001\.vscode\extensions\ms-python.vscode-pylance-2026.2.1` | VS Code 过期扩展 | 7,633 files | 92,636,807 B | `.obsolete` 明确标记；现用替代版本 2026.3.1；逐文件 SHA-256 和进程检查通过 | 从 VS Code Marketplace 重新安装指定版本 |
+| 2026-07-22 | `C:\Users\35001\.vscode\extensions\ms-python.vscode-python-envs-1.36.0-win32-x64` | 与 Code 1.108.1 不兼容的扩展残留 | 127 files | 10,874,070 B | 扩展要求 `^1.110.0-20260204`；现用 1.20.1；日志、逐文件 SHA-256、进程检查通过 | 官方 CLI 可重新安装；最终固定兼容的 1.20.1 |
 
 `C:\Windows\Temp` 扫描时为 0 个文件。未取得权限、未修改所有权；单个失败项均跳过。
 
 ## 4. 官方卸载的软件
 
-无。没有任何软件卸载命令被执行。
+没有卸载任何独立软件主程序。为阻止 VS Code 再次自动生成不兼容的 Python Environments 1.36.0，执行了 VS Code 官方 CLI 的扩展级卸载，再以 `code --install-extension ms-python.vscode-python-envs@1.20.1 --force` 精确重装兼容版本。最终注册记录仅 1 条且 `pinned=True`；扩展自动更新仍可用于其他扩展。
 
 ## 5. 移入隔离区的内容
 
@@ -67,6 +69,8 @@ D: 的总体净减少包含新安装的 Miniconda、Python 3.12 环境、PyTorch
 
 Git、Git LFS、Node.js、Visual Studio/Windows SDK、DevEco/Android 相关运行时、PyCharm/VS Code 内嵌运行时、Lenovo 私有 Python、NVIDIA 组件和系统运行时全部保留。未发现同时满足全部卸载条件的重复独立主安装。
 
+当前注册表仅发现两组同名 `.NET` Runtime/Windows Desktop Runtime 条目；它们属于受保护共享运行时，不能凭同名判定为重复应用。Python Manager 3.14.6 正被 Codex MCP 进程使用，`D:\Python` 被真实项目和虚拟环境引用，Miniconda 为“件证”正式环境；三者均保留。CodeBuddy CN 与 Trae CN 是不同产品，不是 VS Code 的重复安装。Visual Studio、DevEco、Android、Lenovo 和 NVIDIA 目录也没有形成可安全卸载的重复证据链。
+
 ## 8. 孤儿候选与无法判断项
 
 `D:\下载的应用\_audit\orphan-candidates.csv` 共记录 76 个限定范围顶层项，并检查浅层 EXE/数字签名、注册卸载信息、快捷方式、运行进程、PATH、应用文件关联以及项目/文档标记。
@@ -94,6 +98,9 @@ Git、Git LFS、Node.js、Visual Studio/Windows SDK、DevEco/Android 相关运�
 - ONNX opset 18 + ONNX Runtime CPU：PASS，最大绝对误差 2.9802322387695312e-08
 - ONNX 临时目录清理：PASS
 - VS Code 可执行文件、签名和 Python/Pylance/Jupyter 扩展：PASS
+- 新用户终端中 `code`、`pycharm64`、`conda` 全局解析：PASS；机器 PATH 未修改
+- 裸 `python` 仍解析到 WindowsApps，未暴露 base 或项目解释器：PASS
+- Pylance 仅保留 2026.3.1；Python Environments 仅保留并固定 1.20.1：PASS
 - PyCharm 可执行文件和签名：PASS
 - VS Code Terminal：PASS（正式解释器、Python 3.12.13、torch 2.13.0+cu130、CUDA True）
 - PyCharm Terminal：PASS（正式解释器、Python 3.12.13、torch 2.13.0+cu130、CUDA True）
@@ -101,4 +108,18 @@ Git、Git LFS、Node.js、Visual Studio/Windows SDK、DevEco/Android 相关运�
 
 ## 10. 未解决风险与下一动作
 
-外置 `Elements` 盘曾短暂掉线，后续训练前应确认 `E:` 稳定并避免在写入期间拔盘。本轮没有强行分配盘符、初始化磁盘或复制正式仓库来绕过门禁。剩余动作仅为限定范围提交、推送分支和创建 Draft PR。
+外置 `Elements` 盘曾短暂掉线，后续训练前应确认 `E:` 稳定并避免在写入期间拔盘。本轮没有强行分配盘符、初始化磁盘或复制正式仓库来绕过门禁。当前 `E:` 卷标 `Elements`、HealthStatus `Healthy`、OperationalStatus `OK`，正式仓库可访问。剩余动作仅为提交、推送当前报告更新并让现有 Draft PR 自动更新。
+
+## 11. 本轮新增审计证据
+
+- `D:\下载的应用\_audit\path-before-global-tools.txt`
+- `D:\下载的应用\_audit\path-after-global-tools.txt`
+- `D:\下载的应用\_audit\hkcu-environment-before-global-tools.reg`
+- `D:\下载的应用\_audit\vscode-duplicate-extension-files.csv`（7,760 行 SHA-256）
+- `D:\下载的应用\_audit\vscode-duplicate-extension-summary.csv`
+- `D:\下载的应用\_audit\vscode-duplicate-extension-cleanup.csv`
+- `D:\下载的应用\_audit\vscode-recreated-incompatible-extension-files.csv`
+- `D:\下载的应用\_audit\vscode-recreated-incompatible-extension-cleanup.csv`
+- `D:\下载的应用\_audit\vscode-python-envs-official-reinstall.log`
+- `D:\下载的应用\_audit\duplicate-installation-decisions-current.csv`
+- `D:\下载的应用\_audit\post-global-tools-validation.txt`

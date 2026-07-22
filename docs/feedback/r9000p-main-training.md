@@ -50,7 +50,7 @@
 - 中文安装前缀失败后，经用户明确授权使用 `D:\JianzhenApps\Miniconda3`。
 - Conda 26.5.3，base Python 3.14.6，`auto_activate_base=false`。
 - 正式环境 `jianzhen-training`：`D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe`，Python 3.12.13，pip 25.0，64-bit。
-- 未执行 `conda init`，未加入用户或机器 PATH，未注册默认 Python。
+- 未执行 `conda init`，未修改机器 PATH，未注册默认 Python。2026-07-22 仅在用户 PATH 加入 VS Code `bin`、PyCharm `bin` 与 Miniconda `condabin`；未加入 Miniconda 根目录、`Scripts` 或项目环境目录。
 
 ### PyTorch 与训练工具
 
@@ -62,9 +62,10 @@
 
 ### IDE
 
-- VS Code 1.108.1 安装 Python 2026.4.0、Pylance 2026.2.1、Python Environments 1.20.1、Jupyter 2025.9.1。
+- VS Code 1.108.1 安装 Python 2026.4.0、Pylance 2026.3.1、固定版本的 Python Environments 1.20.1、Jupyter 2025.9.1。
 - VS Code 工作区配置精确指向正式环境；使用工作区终端的进程级 `-ExecutionPolicy Bypass` 解决 Conda hook 限制，未修改全局执行策略。
 - 2026-07-19 与 2026-07-22 VS Code 新终端实测：正式 Python 路径、Python 3.12.13、torch 2.13.0+cu130、CUDA True。
+- 用户 PATH 已加入 VS Code `bin`、PyCharm `bin` 和 Miniconda `condabin`；新进程中 `code`、`pycharm64`、`conda` 均可直接调用，机器 PATH 和默认 Python 未改变。
 - PyCharm 2024.1.7 的 Conda 向导与 Conda 26.5.3 出现兼容错误，改用 System Interpreter 指向同一个正式 Conda 环境。
 - 2026-07-19 与 2026-07-22 PyCharm Terminal 实测：正式 Python 路径、Python 3.12.13、torch 2.13.0+cu130、CUDA True。
 - 旧 Python 3.9 的 PyCharm SDK 因现存项目引用而保留。
@@ -78,8 +79,10 @@
 - CrashDumps：删除 1，释放 1,215,933 B。
 - Windows Temp：扫描时无文件。
 - 三个同一物理文件的 Miniconda 安装器硬链接在全部门禁恢复后删除，释放 130,747,768 B。
-- 可核算总清理量：3,582,429,898 B（3.336 GiB）。
-- 未卸载任何软件，未移动任何软件目录，未删除任何用途不明项。
+- 删除 Pylance 2026.2.1 和不兼容的 Python Environments 1.36.0 两个已验证过期扩展目录；清理前对 7,760 个文件全部计算 SHA-256，净减少 103,510,877 B。
+- Python Environments 使用 VS Code 官方 CLI 卸载后精确安装 1.20.1，最终唯一记录 `pinned=True`，避免再次自动生成不兼容的 1.36.0。
+- 可核算净清理总量：3,685,940,775 B（3.433 GiB），其中本轮两个已验证 VS Code 过期扩展目录净减少 103,510,877 B（98.72 MiB）。
+- 未卸载任何独立软件主程序，未移动任何软件目录，未删除任何用途不明项。
 
 ## 执行过的关键命令
 
@@ -139,13 +142,21 @@ GPU 复验使用 CUDA 张量矩阵运算、反向传播与同步；ONNX 复验�
 - `D:\下载的应用\_audit\cleanup-temp-summary.csv`
 - `D:\下载的应用\_audit\cleanup-targets-after.csv`
 - `D:\下载的应用\_audit\disk-after.csv`
+- `D:\下载的应用\_audit\path-before-global-tools.txt`
+- `D:\下载的应用\_audit\path-after-global-tools.txt`
+- `D:\下载的应用\_audit\vscode-duplicate-extension-files.csv`
+- `D:\下载的应用\_audit\vscode-duplicate-extension-cleanup.csv`
+- `D:\下载的应用\_audit\vscode-python-envs-official-reinstall.log`
+- `D:\下载的应用\_audit\duplicate-installation-decisions-current.csv`
+- `D:\下载的应用\_audit\post-global-tools-validation.txt`
 
 ## 测试结果
 
 | 测试 | 结果 | 证据摘要 |
 |---|---|---|
 | Conda/Python | PASS | Conda 26.5.3；Python 3.12.13；64-bit |
-| 全局隔离 | PASS | Miniconda/环境不在用户或机器 PATH；无 PYTHONHOME/PYTHONPATH |
+| 全局隔离 | PASS | 只将 `condabin` 加入用户 PATH；base/环境解释器不在用户或机器 PATH；裸 `python` 仍为 WindowsApps；无 PYTHONHOME/PYTHONPATH |
+| 全局工具 | PASS | 新用户环境中 `code`、`pycharm64`、`conda` 分别解析到预期路径；用户 PATH 去重后 9 项 |
 | pip 依赖 | PASS | `No broken requirements found` |
 | 核心导入 | PASS | OpenCV、NumPy、pandas、sklearn、albumentations、ultralytics、ONNX/ORT 等 |
 | CUDA | PASS | torch 2.13.0+cu130；CUDA 13.0；cuDNN 92000 |
@@ -153,7 +164,7 @@ GPU 复验使用 CUDA 张量矩阵运算、反向传播与同步；ONNX 复验�
 | 正反向传播 | PASS | CUDA forward/backward 与梯度有限性检查通过 |
 | ONNX | PASS | opset 18；CPUExecutionProvider；最大误差 2.9802322387695312e-08 |
 | ONNX 临时清理 | PASS | 测试临时目录不存在 |
-| VS Code 扩展 | PASS | Python、Pylance、Jupyter 已安装 |
+| VS Code 扩展 | PASS | Python、Pylance 2026.3.1、Jupyter 已安装；Python Environments 仅有 1.20.1 且 `pinned=True` |
 | VS Code/PyCharm 终端 | PASS（2026-07-19、2026-07-22） | 两个 IDE 均输出正式解释器和 CUDA True |
 | 清理后 GPU/ONNX | PASS（2026-07-22） | 缓存清理后重新执行成功 |
 | 当前仓库/IDE 项目复验 | PASS | `Elements` 恢复后 origin、分支、HEAD、工作树与两个 IDE 终端均正常 |
@@ -173,7 +184,7 @@ GPU 复验使用 CUDA 张量矩阵运算、反向传播与同步；ONNX 复验�
 - Compute capability：12.0
 - PyTorch arch：包含 `sm_120`
 - ONNX 最大绝对误差：`2.9802322387695312e-08`
-- 可核算清理量：`3.336 GiB`
+- 可核算净清理量：`3.433 GiB`
 
 ## 遇到的问题
 
@@ -184,7 +195,7 @@ GPU 复验使用 CUDA 张量矩阵运算、反向传播与同步；ONNX 复验�
 5. ONNX 首次导出因 Windows PowerShell GBK 无法输出导出器的 `✅` 字符而失败；设置 `PYTHONUTF8=1` 后成功，模型本身无错误。
 6. PyCharm Conda 向导报 `lateinit property envs_dirs has not been initialized`；改用精确环境的 System Interpreter，Terminal 实测成功。
 7. VS Code 首次 Conda 自动激活被 PowerShell 执行策略阻止；使用工作区终端进程级 Bypass 解决，未修改系统或用户策略。
-8. VS Code 尝试更新 Python Environments 1.36.0 时与 Code 1.108.1 不兼容；保留可工作的 1.20.1。
+8. VS Code 尝试更新 Python Environments 1.36.0 时与 Code 1.108.1 不兼容，并在首次删除后自动重生成目录；改用官方 CLI 卸载扩展、精确安装并固定 1.20.1，再按新 SHA-256 清单删除重生成残留。启动 30 秒后仅有 1.20.1 且 `pinned=True`。
 9. 临时文件首轮删除完成后，详细日志因 Windows PowerShell 5.1 将无 BOM UTF-8 脚本中的中文审计路径解码错误而写入失败；实际删除计数和字节数从命令输出写入独立汇总，修正为 ASCII 构造路径后记录剩余跳过项。
 10. 2026-07-22 外置 `Elements` 盘曾未出现于 `Get-Disk`、`Get-Volume` 或 `Get-PSDrive`，导致正式仓库短暂不可访问；08:38 自然恢复为 `E:`。没有执行磁盘初始化、盘符强占或仓库替代复制。
 11. Computer Use 的 Windows 自动化连接因本地 kernel assets 路径错误不可用；改用 Windows 自带窗口激活和剪贴板粘贴，只在两个 IDE 集成终端执行只读验证并将输出写入审计目录，验证成功。
