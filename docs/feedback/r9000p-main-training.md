@@ -389,7 +389,10 @@ JSON 报告成功生成并包含行号、`record_id`、字段、错误代码和�
 - `.gitignore` 已最小补充标注输出、验证报告和常见凭据规则。
 - `dataset/manifests/**` 仍明确允许提交，模板和示例未被忽略。
 - `git diff --check`：PASS。
-- 本节写入时只存在本轮预期的新文件和修改；提交、推送及 Draft PR 在最终差异复验后执行，结果以本轮最终回复为准。
+- 实现提交：`36310629c2a57900b0cba628e738c700e52e43dd`，提交信息为 `feat(training): add dataset manifest contract and validator`。
+- 新分支已推送到 `origin/feat/training-dataset-contract-v01`，实现提交的本地与远程哈希一致。
+- `Get-Command gh -ErrorAction SilentlyContinue` 返回不可用；没有安装 GitHub CLI，也没有创建或声称创建 Draft PR。
+- GitHub 查询确认该分支当前没有 PR。创建入口：`https://github.com/shiqi64728/jianzheng-package-trace/compare/main...feat/training-dataset-contract-v01?expand=1`。
 
 ### 12. 已知限制
 
