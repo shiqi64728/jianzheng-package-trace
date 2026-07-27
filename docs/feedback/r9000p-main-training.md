@@ -224,3 +224,215 @@ GPU 复验使用 CUDA 张量矩阵运算、反向传播与同步；ONNX 复验�
 3. 建立首个可复现实验配置、随机种子、TensorBoard 日志和指标基线。
 4. 模型权重、ONNX、原始数据和运行输出继续走忽略目录或外部制品存储，不提交到 Git。
 5. 外置盘写入期间保持供电和连接稳定；训练前后记录磁盘健康与剩余空间。
+
+## 第一轮：数据合同与清单自动校验器
+
+### 1. 本轮目标
+
+在不接触正式原始数据、不训练模型、不下载权重、不修改系统环境的前提下，建立第一版数据集输入合同、CSV 模板、机器可读合同、只读清单校验器和自动测试，使成员 C 的真实完好、自然破损、受控损伤及 N1/N2/N3 连续节点数据能够在进入训练前统一验收。
+
+### 2. 开始前仓库状态
+
+- E 盘卷标 `Elements`，HealthStatus `Healthy`，OperationalStatus `OK`。
+- 正式仓库：`E:\Artificial-intelegence-training`。
+- `origin`：`https://github.com/shiqi64728/jianzheng-package-trace.git`。
+- 开始时旧分支 `feat/training-complete-environment` 工作树干净，无 merge、rebase 或 cherry-pick。
+- 本地 `main` 原为 `f6ac4d0`，在 `git fetch origin` 后通过 `git pull --ff-only origin main` 快进到 `666ce9d88133c17abae6a6689ad513e79307f606`。
+- 从更新后的 `main` 创建 `feat/training-dataset-contract-v01`，没有直接在 `main` 开发。
+- 审计 `ai`、`configs`、`dataset`、`docs`、`scripts`、README 和 `.gitignore` 后，确认仓库只有空的 `dataset/manifests` 接口，没有既有数据合同、模板、校验器或测试目录，因此本轮没有重复建设或公共接口冲突。
+
+### 3. 实际执行命令
+
+主要命令：
+
+```powershell
+git status --short --branch
+git remote -v
+git branch -vv
+git log -5 --oneline --decorate
+git fetch origin
+git switch main
+git pull --ff-only origin main
+git switch -c feat/training-dataset-contract-v01
+
+& "D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe" --version
+& "D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe" -m pip check
+& "D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe" -c "import sys, torch, cv2, numpy, pandas; ..."
+
+& "D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe" -m unittest discover -s "E:\Artificial-intelegence-training\tests" -v
+& "D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe" -m ruff check "E:\Artificial-intelegence-training\scripts\dataset" "E:\Artificial-intelegence-training\tests\dataset"
+& "D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe" -m ruff format --check "E:\Artificial-intelegence-training\scripts\dataset" "E:\Artificial-intelegence-training\tests\dataset"
+git diff --check
+git status --short
+```
+
+另外使用临时目录分别运行合法虚拟示例和人工构造的非法清单；临时 CSV、图片和 JSON 报告由 `TemporaryDirectory` 在验证完成后删除。
+
+### 4. 新增和修改文件
+
+新增：
+
+- `configs/training/manifest-schema-v0.1.json`
+- `dataset/manifests/templates/manifest-v0.1.template.csv`
+- `dataset/manifests/templates/manifest-v0.1.example.csv`
+- `docs/dataset/data-contract-v0.1.md`
+- `scripts/dataset/__init__.py`
+- `scripts/dataset/validate_manifest.py`
+- `tests/dataset/__init__.py`
+- `tests/dataset/test_validate_manifest.py`
+
+修改：
+
+- `.gitignore`
+- `docs/feedback/r9000p-main-training.md`
+
+两个 CSV 均已验证以 UTF-8 BOM `EF BB BF` 开头。模板只有表头；虚拟示例包含 6 行，覆盖四种来源和一个完整 N1/N2/N3 序列。
+
+### 5. 数据合同摘要
+
+- schema 版本固定为 `0.1`。
+- 21 个稳定字段覆盖身份、图像、状态/损伤和数据治理。
+- 四类来源：`field_normal`、`field_natural_damage`、`controlled_damage`、`continuous_node`。
+- 表面、节点、状态、损伤类型、等级、首次异常节点、隐私状态、标注状态和 split 均使用固定枚举。
+- 路径必须相对 `data-root`，只使用 `/`，不得包含盘符、UNC、绝对路径、空路径段、`.` 或 `..`，解析结果必须留在数据根目录内。
+- 同一个物理纸箱允许多行共用 `package_id`；跨批次、跨来源或跨 train/val/test 才判为 ID 冲突或数据泄漏。
+- 连续序列必须填写 `sequence_id`，包含 N1/N2/N3，保持包裹、split 和首次异常节点一致。
+- 正式接收清单只允许 `privacy_status=masked` 或 `not_applicable`；`rejected` 和 `pending_review` 必须返工。
+- train/val/test 记录必须完成标注；`reviewed` 必须填写 reviewer。
+
+### 6. 验证器支持的检查项目
+
+- 空清单、缺少表头、缺少必需列、重复表头和额外列警告；
+- 必填值、schema 版本、ID 格式、枚举值和带时区 ISO 8601 时间；
+- `record_id` 重复、图片路径重复引用；
+- 包裹 ID 跨批次/来源冲突；
+- 正常/异常与损伤类型、等级、首次异常节点的逻辑；
+- 连续记录缺少 `sequence_id`、使用 `node_id=NA`、缺少 N1/N2/N3；
+- 非连续记录错误填写 `sequence_id`；
+- 同一包裹或连续序列跨 train/val/test；
+- 同一序列对应多个包裹、节点/表面槽位重复、首次异常节点冲突或与实际状态不一致；
+- 隐私状态、标注状态和 reviewer；
+- 路径绝对化、UNC、盘符、反斜杠、越级目录、根目录逃逸和不支持的图片扩展；
+- 开启 `--check-files` 后检查文件存在性和 OpenCV 解码；
+- 控制台中文摘要和 UTF-8 JSON 报告；
+- 数据错误返回 1，使用错误返回 2，非预期内部错误返回 3。
+
+校验器默认只读，不修改 CSV，不移动、删除、重命名或自动修复图片。
+
+### 7. 自动测试结果
+
+- 使用 Python 标准库 `unittest`，没有安装新依赖。
+- 共运行 21 个测试，全部通过。
+- 覆盖任务要求的 15 类必测场景，并增加合法连续序列、额外列警告、包裹跨批次冲突、隐私拒绝、空清单和退出码区分。
+- `ruff check`：PASS。
+- `ruff format --check`：PASS，4 个 Python 文件均已格式化。
+- `py_compile`：PASS。
+- 机器可读 JSON 解析：PASS，schema `0.1`、21 个字段。
+
+### 8. 合法示例验证结果
+
+对 `dataset/manifests/templates/manifest-v0.1.example.csv` 运行真实 CLI，不开启文件检查，因为示例路径明确为虚拟路径：
+
+```text
+退出码：0
+总记录：6
+通过记录：6
+失败记录：0
+错误：0
+警告：0
+```
+
+JSON 报告成功生成在临时目录，并在验证结束后清理。
+
+### 9. 非法示例验证结果
+
+在临时目录人工构造 1 行非法清单并开启 `--check-files`：
+
+```text
+退出码：1
+总记录：1
+通过记录：0
+失败记录：1
+错误：6
+警告：0
+```
+
+实际错误代码：
+
+- `INVALID_CAPTURE_TIME`
+- `ABSOLUTE_IMAGE_PATH`
+- `NORMAL_WITH_DAMAGE_TYPE`
+- `NORMAL_WITH_SEVERITY`
+- `PRIVACY_NOT_APPROVED`
+- `REVIEWER_REQUIRED`
+
+JSON 报告成功生成并包含行号、`record_id`、字段、错误代码和中文说明；临时清单及报告随后自动删除。
+
+### 10. 环境复验结果
+
+- 正式解释器：`D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe`
+- Python：3.12.13
+- `pip check`：`No broken requirements found.`
+- PyTorch：2.13.0+cu130
+- CUDA：True
+- GPU：NVIDIA GeForce RTX 5060 Laptop GPU
+- OpenCV：5.0.0
+- NumPy：2.4.4
+- pandas：3.0.3
+
+没有安装或升级 Python、PyTorch、CUDA、cuDNN、OpenCV、pandas、Ultralytics、pytest 或系统工具；没有修改 PATH、默认 Python、PowerShell 全局执行策略、Miniconda base、IDE 全局设置或 `F:\SecurityLab`。
+
+### 11. Git 状态
+
+- 当前分支：`feat/training-dataset-contract-v01`
+- 分支基点：`666ce9d88133c17abae6a6689ad513e79307f606`
+- `.gitignore` 已最小补充标注输出、验证报告和常见凭据规则。
+- `dataset/manifests/**` 仍明确允许提交，模板和示例未被忽略。
+- `git diff --check`：PASS。
+- 本节写入时只存在本轮预期的新文件和修改；提交、推送及 Draft PR 在最终差异复验后执行，结果以本轮最终回复为准。
+
+### 12. 已知限制
+
+- v0.1 只能发现相同路径的重复引用，不能发现“同一图片改名后重复”；内容哈希去重未纳入本轮。
+- 程序不能自动证明隐私已经完全脱敏，仍需成员 C 和成员 A 查看图片。
+- 程序不能自动判断损伤类型、严重程度和首次异常节点是否符合真实业务事实。
+- 程序不能证明两个不同 `package_id` 是否实际属于同一物理纸箱。
+- 虚拟示例只证明结构合同通过，不证明示例图片存在。
+- 连续节点合同 v0.1 要求完整 N1/N2/N3；部分序列必须补齐后再进入正式接收清单。
+
+### 13. 未完成事项
+
+本轮开发目标已经完成。以下事项明确不在本轮范围内，未执行：
+
+- 正式原始数据接入；
+- 采集程序、摄像头、前端或后端开发；
+- 模型训练、YOLO/其他权重下载；
+- 图片内容哈希或感知哈希去重；
+- 第二轮数据准备或训练工作。
+
+### 14. 风险
+
+- WPS/Excel 可能自动改变长 ID、时间或编码，成员 C 保存后必须重新运行校验。
+- `privacy_status=masked` 只是声明，不能替代人工隐私抽查。
+- 错误的人工标注可能结构合格但语义错误。
+- E 盘为 USB 外置盘，写入和校验正式批次时必须保持连接稳定。
+- 未来合同变更必须同步更新文档、JSON、模板、验证器和测试，不能静默覆盖 v0.1。
+
+### 15. 回滚方法
+
+提交前可只对本轮路径执行 `git restore` 并删除本轮新增文件；不得使用会影响其他文件的清理命令。提交后优先使用：
+
+```powershell
+git revert <本轮提交哈希>
+```
+
+该回滚只撤销合同、模板、验证器、测试、反馈和 `.gitignore` 增量，不会接触任何原始数据或图片。本轮校验器从未修改用户数据，因此不需要数据级回滚。
+
+### 16. 下一轮建议
+
+以下仅为建议，本轮未执行：
+
+1. 由成员 C 使用少量、完全脱敏的受控样本进行首次线下交付演练。
+2. 由成员 A 按文档进行独立复验，记录结构错误和人工语义错误的差异。
+3. 根据试运行反馈决定是否在 v0.2 增加文件 SHA-256/感知哈希、批次元数据和更细的标注字典。
+4. 在任何训练开始前，先冻结已验收的 package/sequence 级 split 清单并复查泄漏。

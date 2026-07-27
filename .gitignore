@@ -19,10 +19,16 @@ dataset/interim/
 dataset/processed/
 dataset/images/
 dataset/labels/
+dataset/annotations/
+dataset/validation-reports/
 data/
 datasets/
 !dataset/manifests/
 !dataset/manifests/**
+
+# Local validation reports
+validation-reports/
+**/validation-report*.json
 
 # Training outputs and model artifacts
 runs/
@@ -46,3 +52,11 @@ lightning_logs/
 *.mov
 *.mkv
 *.webm
+
+# Local credentials and private keys
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
