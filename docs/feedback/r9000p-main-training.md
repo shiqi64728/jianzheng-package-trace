@@ -439,3 +439,338 @@ git revert <本轮提交哈希>
 2. 由成员 A 按文档进行独立复验，记录结构错误和人工语义错误的差异。
 3. 根据试运行反馈决定是否在 v0.2 增加文件 SHA-256/感知哈希、批次元数据和更细的标注字典。
 4. 在任何训练开始前，先冻结已验收的 package/sequence 级 split 清单并复查泄漏。
+
+## 第二轮：试采集批次初始化与图像质量审计
+
+### 1. 第一轮合并验收
+
+- 2026-07-28 执行 `git fetch origin` 后，`origin/main` 为 `ce70e1477b3bb0abc3a89315f7840b4a4ecf8610`，提交说明为 `Merge pull request #2 from shiqi64728/feat/training-dataset-contract-v01`。
+- `git merge-base --is-ancestor 36310629c2a57900b0cba628e738c700e52e43dd origin/main` 返回 `0`。
+- `git merge-base --is-ancestor ef3594b3a22d83915a78ec73198634c292b232cd origin/main` 返回 `0`。
+- 第一轮实现提交和反馈提交均已进入 `origin/main`，第一轮合并硬闸门通过。
+- 本地 `main` 通过 `git pull --ff-only origin main` 快进到 `ce70e1477b3bb0abc3a89315f7840b4a4ecf8610`，与 `origin/main` 完全一致。
+
+### 2. 本轮目标
+
+本轮只建立试采集批次初始化工具、批次级元数据结构、集中式图像质量阈值、只读图像质量审计器、JSON/CSV 报告、自动测试和成员 C/A 工作流文档。
+
+本轮没有使用真实快递数据，没有处理隐私图片，没有训练模型，没有下载权重，没有开发摄像头、标注平台、前端或后端，也没有修改数据合同版本。
+
+### 3. 开始前仓库状态
+
+- 正式仓库：`E:\Artificial-intelegence-training`
+- 远程仓库：`https://github.com/shiqi64728/jianzheng-package-trace.git`
+- E 盘：`Elements`，NTFS，`Healthy / OK`
+- 开始前工作树干净。
+- `.git\MERGE_HEAD`、`.git\rebase-merge`、`.git\rebase-apply`、`.git\CHERRY_PICK_HEAD` 均不存在。
+- 第二轮分支：`feat/training-pilot-batch-audit-v01`
+- 分支基点：`ce70e1477b3bb0abc3a89315f7840b4a4ecf8610`
+
+### 4. 实际执行命令
+
+主要执行：
+
+```powershell
+git status --short --branch
+git remote -v
+git branch -vv
+git log -10 --oneline --decorate
+git fetch origin
+git merge-base --is-ancestor <第一轮提交> origin/main
+git switch main
+git pull --ff-only origin main
+git switch -c feat/training-pilot-batch-audit-v01
+
+& "D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe" --version
+& "D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe" -m pip check
+& "D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe" -m unittest discover -s "E:\Artificial-intelegence-training\tests" -v
+& "D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe" -m ruff check "E:\Artificial-intelegence-training\scripts\dataset" "E:\Artificial-intelegence-training\tests\dataset"
+& "D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe" -m ruff format --check "E:\Artificial-intelegence-training\scripts\dataset" "E:\Artificial-intelegence-training\tests\dataset"
+& "D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe" -m py_compile <第一轮和第二轮 Python 文件>
+git diff --check
+git diff --cached --check
+git push -u origin feat/training-pilot-batch-audit-v01
+```
+
+端到端验证脚本位于仓库外：
+
+```text
+C:\Users\35001\Documents\Codex\2026-07-19\files-mentioned-by-the-user-r9000p\work\run-round2-pilot-audit-e2e.py
+```
+
+它只在 `TemporaryDirectory` 中生成合成图片、临时批次和报告。
+
+### 5. 新增和修改文件
+
+新增：
+
+```text
+configs/training/image-quality-v0.1.json
+docs/dataset/image-quality-audit-v0.1.md
+docs/dataset/pilot-batch-workflow-v0.1.md
+scripts/dataset/audit_image_quality.py
+scripts/dataset/init_pilot_batch.py
+tests/dataset/test_audit_image_quality.py
+tests/dataset/test_init_pilot_batch.py
+```
+
+修改：
+
+```text
+.gitignore
+docs/feedback/r9000p-main-training.md
+```
+
+`scripts/dataset/validate_manifest.py` 未修改。
+
+### 6. 批次初始化工具
+
+`init_pilot_batch.py`：
+
+- 只在用户明确提供且已存在的绝对 `output-root` 内创建批次；
+- 默认拒绝覆盖同名批次，不提供覆盖参数；
+- 拒绝含 `..`、路径分隔符、盘符、绝对路径和 UNC 形式的 `batch_id`；
+- 复用第一轮 schema 的 ID 规则和 `source_type` 枚举；
+- 从第一轮 UTF-8 BOM 模板原样生成仅含 21 字段表头的 `manifest.csv`；
+- 不创建虚假图片记录；
+- 创建 `images`、`annotations`、`setup_photos`、`reports`；
+- 生成 `batch-info.json`、`README-COLLECTION.txt` 和初始化文件 `SHA256SUMS.txt`；
+- 初始化失败时只删除本次明确创建的文件和空目录，不递归删除，不接触既有目录；
+- 退出码为 `0/1/2/3`，分别表示成功、输入或冲突、模板或配置错误、内部错误。
+
+### 7. batch-info结构
+
+稳定字段：
+
+```text
+batch_schema_version
+manifest_schema_version
+batch_id
+source_type
+collector
+device_id
+created_at
+purpose
+location_type
+permission_status
+privacy_method
+camera_or_phone_model
+lens
+resolution_setting
+aspect_ratio_setting
+hdr_status
+filter_status
+lighting
+background
+notes
+```
+
+`manifest_schema_version` 固定引用 `0.1`，`created_at` 使用带时区 ISO 8601，`permission_status` 默认只能是 `pending`，不会自动写成 `approved`。
+
+审计器自动读取 `data-root\batch-info.json`，检查字段、必填值、拍摄参数完整性，以及 `batch_id`、`source_type`、`collector`、`device_id` 与 manifest 的一致性。隐私和授权仍然只来自人工声明与复核。
+
+### 8. 图像质量指标
+
+逐图计算：
+
+```text
+record_id
+image_relpath
+sha256
+file_size_bytes
+width
+height
+channels
+aspect_ratio
+mean_gray
+std_gray
+laplacian_variance
+underexposed_ratio
+overexposed_ratio
+readable
+quality_status
+quality_flags
+quality_messages
+```
+
+支持：
+
+```text
+UNREADABLE_IMAGE
+LOW_RESOLUTION
+EXTREME_ASPECT_RATIO
+POSSIBLE_BLUR
+SEVERE_BLUR
+POSSIBLE_UNDEREXPOSURE
+POSSIBLE_OVEREXPOSURE
+DUPLICATE_CONTENT
+RESOLUTION_OUTLIER
+```
+
+所有标记可以共存。工具只读打开图片，不写回、不裁剪、不移动、不删除原图。
+
+### 9. SHA-256内容重复检测
+
+- 对原始文件字节计算 SHA-256。
+- 不同 `record_id` 和不同 `image_relpath` 的 SHA-256 完全相同时标记 `DUPLICATE_CONTENT`。
+- 报告输出稳定的 `duplicate_group_id`、`sha256`、`record_ids`、`image_relpaths`。
+- 测试确认两个不同文件名的相同字节文件被归入同一个重复组。
+- 不做感知哈希，不安装 `imagehash`，不自动删除、移动或修改重复文件。
+
+### 10. 质量阈值配置
+
+`image-quality-v0.1.json` 集中包含分辨率、长宽比、Laplacian、暗亮像素、灰度均值、曝光面积比例、精确重复级别和尺寸离群级别。
+
+主要第一版工程初始值：
+
+- 最低分辨率：`640×480`
+- 长宽比：`0.5—2.0`
+- 模糊 WARN：Laplacian 方差低于 `100.0`
+- 严重模糊：低于 `20.0`
+- 暗像素上界：`20`
+- 亮像素下界：`235`
+- 灰度均值 WARN：低于 `45.0` 或高于 `210.0`
+- 暗/亮像素比例 WARN：`0.35`
+- 尺寸离群：批次至少 `4` 张且少数尺寸占比不高于 `0.25`
+
+配置明确声明尚未经过真实快递数据验证，必须由首批 20—50 张完全脱敏图片校准。缺字段、类型错误、范围错误和阈值次序错误均明确返回退出码 `2`。
+
+### 11. 自动测试结果
+
+最终执行 `unittest discover`：
+
+- 总数：59
+- 通过：59
+- 失败：0
+- 错误：0
+
+组成：
+
+- 第一轮 manifest 测试：21
+- 第二轮批次初始化测试：12
+- 第二轮图像质量审计测试：26
+
+所有测试图片均由 OpenCV 在临时目录运行时生成，未向 Git 提交图片。
+
+### 12. 合成批次端到端验证
+
+在 `TemporaryDirectory` 中完成初始化、生成图片、填写 manifest、运行第一轮校验器、运行第二轮审计器、检查报告并自动清理。
+
+结果：
+
+```text
+初始化退出码：0
+第一轮校验器退出码：1
+第二轮审计器退出码：1
+正常图片：PASS / NONE
+模糊图片：FAIL / SEVERE_BLUR
+欠曝图片：FAIL / SEVERE_BLUR,POSSIBLE_UNDEREXPOSURE
+过曝图片：FAIL / SEVERE_BLUR,POSSIBLE_OVEREXPOSURE
+重复内容A：WARN / DUPLICATE_CONTENT
+重复内容B：WARN / DUPLICATE_CONTENT
+不可读文件：FAIL / UNREADABLE_IMAGE
+批次总状态：FAIL
+重复内容组数：1
+JSON报告：成功生成
+CSV报告：成功生成，BOM=efbbbf
+临时目录清理结果：True
+```
+
+第一轮校验器退出码为 `1` 是受控预期，因为端到端批次故意包含一个无法解码文件。
+
+### 13. 第一轮兼容性验证
+
+- 第一轮 21 项测试全部继续通过。
+- 第一轮合法示例仍为 6/6 通过，退出码 `0`。
+- 第一轮 CLI 参数保持 `--manifest`、`--data-root`、`--schema`、`--report`、`--check-files`。
+- 第一轮退出码 `0/1/2/3` 未改变。
+- 第一轮错误代码、枚举、路径规则和隐私规则未复制或修改。
+- 第二轮审计器直接调用 `validate_manifest()` 完成结构验证。
+- 第一轮“同一路径重复”仍由 `DUPLICATE_IMAGE_RELPATH` 发现。
+
+### 14. 环境复验
+
+- 正式 Python：3.12.13
+- `pip check`：`No broken requirements found.`
+- PyTorch：2.13.0+cu130
+- CUDA：True
+- GPU：NVIDIA GeForce RTX 5060 Laptop GPU
+- OpenCV：5.0.0
+- NumPy：2.4.4
+- pandas：3.0.3
+
+本轮没有安装、升级或降级任何 Python 包或系统工具，没有修改 PATH、默认 Python、PowerShell 执行策略、Miniconda base、CUDA、cuDNN、IDE 全局设置、其他环境或 `F:\SecurityLab`。
+
+### 15. Git状态
+
+- 分支：`feat/training-pilot-batch-audit-v01`
+- 实现提交：`c99efa44498017f469dda32ed58dda91485edc37`
+- 实现提交信息：`feat(training): add pilot batch and image quality audit tools`
+- 实现暂存差异：8 个文件，2490 行新增，SHA-256 为 `72907A7B4F2F29A6375A0C26904236509B958CD40C4606A919046CD7941C5498`
+- 实现提交已经推送到 `origin/feat/training-pilot-batch-audit-v01`。
+- 本反馈按任务允许拆为第二个纯文档提交，原因是先取得并记录真实实现提交哈希和首次推送结果。
+- `Get-Command gh -ErrorAction SilentlyContinue` 返回不可用；未安装 GitHub CLI。
+- Compare 入口：`https://github.com/shiqi64728/jianzheng-package-trace/compare/main...feat/training-pilot-batch-audit-v01?expand=1`
+
+### 16. 已知限制
+
+- Laplacian 方差只是筛查指标；纯色纸箱可能天然低分。
+- 深色或浅色纸箱可能分别触发欠曝或过曝候选，必须人工查看。
+- SHA-256 只能发现字节完全相同的文件，无法发现裁剪、重编码、压缩或轻微修改后的重复内容。
+- 自动工具不能证明图片已经完全脱敏，不能判断是否取得站点授权。
+- 自动工具不能确认损伤类型、严重程度或首次异常节点的业务语义。
+- 第一版阈值尚未用真实试采集分布校准。
+
+### 17. 未完成事项
+
+本轮开发目标已完成。以下事项明确未执行：
+
+- 真实快递图片或站点数据接入；
+- 首批 20—50 张真实试采集审计；
+- 阈值校准；
+- 感知哈希；
+- 正式标注工具；
+- 模型训练、摄像头、前端或后端；
+- 第三轮开发。
+
+### 18. 风险
+
+- 未校准阈值可能对纯色、深色、浅色或反光纸箱产生 WARN/FAIL 偏差。
+- `permission_status`、`privacy_status` 和 `privacy_method` 由人工填写，错误声明不会被图像质量算法纠正。
+- WPS/Excel 仍可能改变 ID、时间或编码，保存后必须重新校验。
+- E 盘为外置盘，正式批次写入和审计期间必须保持稳定连接。
+- 报告包含文件 SHA-256，应按项目数据管理要求保存，不应提交到 Git。
+
+### 19. 回滚方法
+
+实现提交已形成，优先使用：
+
+```powershell
+git revert c99efa44498017f469dda32ed58dda91485edc37
+```
+
+反馈文档提交需要单独回滚时使用其最终提交哈希执行 `git revert <反馈提交哈希>`。回滚代码不会触碰仓库外试采集批次或原始图片。
+
+### 20. 给成员C的20—50张试采集要求
+
+1. 只使用 3—5 个自有纸箱和完全脱敏样本。
+2. 固定同一台手机、后置主摄、1× 倍率和图片比例。
+3. 不使用数码变焦、美颜、滤镜或人像模式。
+4. 保持 HDR 设置一致。
+5. 使用原图传输，不经微信普通图片压缩。
+6. 记录设备 ID、手机型号、镜头、分辨率、比例、HDR、滤镜、光照和背景。
+7. 保留原始文件，不裁剪、不重编码、不覆盖。
+8. 不采集姓名、手机号、地址、运单号、人脸、身份证或站点标识。
+9. 每张图片填写一条真实 manifest 记录。
+10. 提交前运行第一轮 manifest 校验和第二轮图像质量审计。
+11. 将所有 FAIL 修正或补采；WARN 必须人工查看。
+12. 提交后由成员 A 独立复验。
+
+### 21. 下一轮建议
+
+本轮不执行第三轮，只提出以下建议：
+
+1. 成员 C 采集第一批 20—50 张完全脱敏测试图片。
+2. 成员 A 使用第二轮工具进行真实试采集审计。
+3. 根据实际分辨率、亮度和 Laplacian 分布调整阈值。
+4. 根据试采集结果决定是否进入标注工具准备。
