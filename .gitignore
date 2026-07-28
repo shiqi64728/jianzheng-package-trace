@@ -29,6 +29,18 @@ datasets/
 # Local validation reports
 validation-reports/
 **/validation-report*.json
+**/quality-report*.json
+**/quality-report*.csv
+
+# Pilot collection batches and private intake material
+pilot-batches/
+incoming/
+dataset/pilot-batches/
+dataset/private/
+dataset/permissions/
+dataset/contacts/
+dataset/**/SHA256SUMS.txt
+dataset/**/image-hashes*.txt
 
 # Training outputs and model artifacts
 runs/
@@ -52,6 +64,8 @@ lightning_logs/
 *.mov
 *.mkv
 *.webm
+*.log
+logs/
 
 # Local credentials and private keys
 .env
@@ -60,3 +74,4 @@ lightning_logs/
 *.pem
 *.key
 credentials*.json
+*.iml
