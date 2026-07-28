@@ -1,0 +1,226 @@
+{
+  "schema_version": "0.1",
+  "contract_name": "jianzheng-dataset-manifest",
+  "description": "件证项目数据清单合同 v0.1；由标准库 JSON 读取，不要求第三方 JSON Schema 包。",
+  "encoding": "utf-8-sig",
+  "fields": [
+    "schema_version",
+    "record_id",
+    "package_id",
+    "batch_id",
+    "sequence_id",
+    "source_type",
+    "image_relpath",
+    "surface",
+    "node_id",
+    "capture_time",
+    "device_id",
+    "status",
+    "damage_type",
+    "severity",
+    "first_abnormal_node",
+    "privacy_status",
+    "annotation_status",
+    "split",
+    "collector",
+    "reviewer",
+    "notes"
+  ],
+  "required_columns": [
+    "schema_version",
+    "record_id",
+    "package_id",
+    "batch_id",
+    "sequence_id",
+    "source_type",
+    "image_relpath",
+    "surface",
+    "node_id",
+    "capture_time",
+    "device_id",
+    "status",
+    "damage_type",
+    "severity",
+    "first_abnormal_node",
+    "privacy_status",
+    "annotation_status",
+    "split",
+    "collector",
+    "reviewer",
+    "notes"
+  ],
+  "required_values": [
+    "schema_version",
+    "record_id",
+    "package_id",
+    "batch_id",
+    "source_type",
+    "image_relpath",
+    "surface",
+    "node_id",
+    "capture_time",
+    "device_id",
+    "status",
+    "damage_type",
+    "severity",
+    "first_abnormal_node",
+    "privacy_status",
+    "annotation_status",
+    "split",
+    "collector"
+  ],
+  "optional_values": [
+    "sequence_id",
+    "reviewer",
+    "notes"
+  ],
+  "enums": {
+    "source_type": [
+      "field_normal",
+      "field_natural_damage",
+      "controlled_damage",
+      "continuous_node"
+    ],
+    "surface": [
+      "FRONT",
+      "LEFT",
+      "RIGHT",
+      "TOP",
+      "BACK",
+      "BOTTOM"
+    ],
+    "node_id": [
+      "N1",
+      "N2",
+      "N3",
+      "NA"
+    ],
+    "status": [
+      "normal",
+      "abnormal"
+    ],
+    "damage_type": [
+      "NONE",
+      "D01",
+      "D02",
+      "D03",
+      "D04",
+      "D05",
+      "MULTI"
+    ],
+    "severity": [
+      "none",
+      "light",
+      "medium",
+      "heavy",
+      "unknown"
+    ],
+    "first_abnormal_node": [
+      "NONE",
+      "N1",
+      "N2",
+      "N3",
+      "UNKNOWN"
+    ],
+    "privacy_status": [
+      "masked",
+      "not_applicable",
+      "rejected",
+      "pending_review"
+    ],
+    "annotation_status": [
+      "unlabelled",
+      "labelled",
+      "reviewed",
+      "needs_review"
+    ],
+    "split": [
+      "unassigned",
+      "train",
+      "val",
+      "test"
+    ]
+  },
+  "identifier_patterns": {
+    "record_id": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    "package_id": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    "batch_id": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    "sequence_id": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    "device_id": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    "collector": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+    "reviewer": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+  },
+  "path_rules": {
+    "relative_only": true,
+    "posix_separator_only": true,
+    "forbid_unc": true,
+    "forbid_drive_letter": true,
+    "forbid_parent_traversal": true,
+    "must_resolve_within_data_root": true,
+    "allowed_extensions": [
+      ".jpg",
+      ".jpeg",
+      ".png",
+      ".bmp",
+      ".tif",
+      ".tiff",
+      ".webp"
+    ]
+  },
+  "conditional_rules": [
+    {
+      "id": "normal_damage",
+      "description": "normal 必须使用 damage_type=NONE 且 severity=none。"
+    },
+    {
+      "id": "abnormal_damage",
+      "description": "abnormal 不得使用 damage_type=NONE 或 severity=none。"
+    },
+    {
+      "id": "continuous_sequence",
+      "description": "continuous_node 必须填写 sequence_id，node_id 必须为 N1/N2/N3，并形成完整 N1/N2/N3 序列。"
+    },
+    {
+      "id": "non_continuous_sequence",
+      "description": "非 continuous_node 记录不得填写 sequence_id。"
+    },
+    {
+      "id": "privacy_ready",
+      "description": "可接收清单只能使用 masked 或 not_applicable；rejected 与 pending_review 必须返工。"
+    },
+    {
+      "id": "annotation_ready",
+      "description": "train/val/test 记录必须为 labelled 或 reviewed；reviewed 必须填写 reviewer。"
+    },
+    {
+      "id": "capture_time",
+      "description": "capture_time 必须是包含时区的 ISO 8601 时间。"
+    }
+  ],
+  "split_rules": {
+    "protected_splits": [
+      "train",
+      "val",
+      "test"
+    ],
+    "package_group_field": "package_id",
+    "sequence_group_field": "sequence_id",
+    "package_must_not_cross_splits": true,
+    "sequence_must_not_cross_splits": true,
+    "case_insensitive_identifiers": true
+  },
+  "sequence_rules": {
+    "required_nodes": [
+      "N1",
+      "N2",
+      "N3"
+    ],
+    "unique_slot_fields": [
+      "sequence_id",
+      "node_id",
+      "surface"
+    ],
+    "first_abnormal_node_must_be_consistent": true,
+    "complete_abnormal_sequence_must_not_use_unknown": true
+  }
+}
