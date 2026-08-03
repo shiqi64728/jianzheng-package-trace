@@ -774,3 +774,130 @@ git revert c99efa44498017f469dda32ed58dda91485edc37
 2. 成员 A 使用第二轮工具进行真实试采集审计。
 3. 根据实际分辨率、亮度和 Laplacian 分布调整阈值。
 4. 根据试采集结果决定是否进入标注工具准备。
+
+## 数据路线过渡：公开数据为主、人工采集为补充
+
+### 1. 过渡原因
+
+项目已经完成方案 A 的公开数据获取，训练数据路线由“成员 C 大规模人工采集”调整为“公开数据集和公开资料为主，少量类别缺口补拍，少量 N1/N2/N3 连续节点验证”。本轮只整理和迁移预存文档，不执行公开数据治理适配、外部 manifest、类别映射程序或模型训练。
+
+### 2. 开始前工作树状态
+
+开始分支为 `feat/training-pilot-batch-audit-v01`，存在两项预存变化：
+
+```text
+ M docs/dataset/pilot-batch-workflow-v0.1.md
+?? docs/dataset/member-c-collection-guide-v0.1.md
+```
+
+远程地址为 `https://github.com/shiqi64728/jianzheng-package-trace.git`。E 盘状态为 `Healthy / OK`。两项变化不是上一轮公开数据治理任务生成的，因此没有执行 restore、reset、clean 或删除。
+
+### 3. 两份预存文档内容审查
+
+两份文件均为有效 UTF-8 纯 Markdown，无空文件、NUL 字节、乱码、冲突标记或二进制内容。未发现真实姓名、手机号、地址、运单号、Token、Cookie、密码、私钥或 Roboflow 认证信息。
+
+保留价值包括：21 字段现实映射、一张图片一行、批量导入、匿名 ID、固定手机、后置主摄、1× 倍率、关闭滤镜/美颜/人像模式、原图传输、隐私与授权、manifest 校验、图像质量审计以及 N1/N2/N3 不得猜测的规则。旧内容仍把 20—50 张试采集放在默认入口，需要按新路线收窄。
+
+### 4. Stash备份和哈希
+
+原始文件 SHA-256：
+
+```text
+docs/dataset/pilot-batch-workflow-v0.1.md
+FEBB539EA45AD571740D07A5FEC0DDE6D39A71968D4FCC564D0651C209DE46C2
+
+docs/dataset/member-c-collection-guide-v0.1.md
+6B4C581D58F4B4BA72BC5AEE2D2A65D767759ED98806516368732ABF92C0A875
+```
+
+回滚备份：
+
+```text
+stash@{0}: On feat/training-pilot-batch-audit-v01: preexisting member-c collection docs before external-data route migration
+stash commit: a05a8c51396e2c90346df03c65f59778f993b22d
+```
+
+通过 `git stash show --name-status --include-untracked "stash@{0}"` 确认 stash 同时包含修改文件和未跟踪文件。恢复时使用 `git stash apply`，没有执行 `pop`、`drop` 或 `clear`。
+
+### 5. 文档分支
+
+工作树清理后执行 `git fetch origin`、切换 `main` 并使用 `git pull --ff-only origin main` 更新。`main` 从 `ce70e14` 快进到 `c31ae95c143a6d76c66e0323adff9b379e40f509`，与 `origin/main` 一致。随后创建：
+
+```text
+docs/external-data-route-transition-v01
+```
+
+stash 在新分支应用成功，无冲突。
+
+### 6. 修改和新增文件
+
+修改：
+
+```text
+docs/dataset/pilot-batch-workflow-v0.1.md
+docs/feedback/r9000p-main-training.md
+```
+
+新增：
+
+```text
+docs/dataset/member-c-collection-guide-v0.1.md
+docs/dataset/data-source-strategy-v0.1.md
+```
+
+没有重命名或删除文件；没有修改代码、测试、schema、配置、模板或 `.gitignore`。
+
+### 7. pilot batch流程的新定位
+
+pilot batch 流程不再用于大规模人工采集。它保留为 D01、D05、明确 D04 缺口补拍、少量自有包裹连续节点验证、现场演示和公开数据域差异对照的接收与质量工具。采集量由明确缺口决定，不再设置为了凑规模的默认数量目标。
+
+21 字段合同、初始化工具、manifest 校验器和图像质量审计器继续有效，但只处理真实自有或明确授权的补缺/验证数据；公开数据集图片不得伪造内部物流字段。
+
+### 8. 成员C职责的新定位
+
+成员 C 现在优先负责：
+
+1. 抽查 `defect-cardboard` 的 `dent`、`hole` 和 `dirt`，重点复核 `dirt` 是否符合 D04；
+2. 抽查 Damaged Box Detection 的 normal/damaged 语义、错标、非纸箱样本、背景偏差、增强与重复；
+3. 抽查 TAMPAR reference/tampered 配对并记录争议；
+4. 不改动公开数据 raw、原标签、许可证或来源登记；
+5. 仅在明确任务下补拍 D01、D05、明确 D04、少量连续节点和演示样本。
+
+成员 C 不再承担大规模普通破损采集、大批量快递站拍摄、私人运单网页爬取、个人信息收集或社交平台面单图片抓取。
+
+### 9. 公开数据与补缺采集边界
+
+公开数据先经过来源登记、许可证和类别审计、重复/split 泄漏检查及人工映射复核，再形成训练候选。公开数据没有真实内部业务字段，不能证明 N1/N2/N3 异常节点或责任。
+
+人工补采仅解决 D01、D05、明确 D04、真实连续节点和演示/域差异缺口。补采必须使用自有或明确授权纸箱、真实时间与匿名 ID，并继续执行 manifest 和图像质量验收。
+
+### 10. 文档一致性检查
+
+已搜索“成员 C”“大规模采集”“人工采集”“20—50”“快递站”等路线词。历史反馈和既有配置中的 20—50 描述作为第二轮交付历史及工具阈值校准约束保留，没有修改代码或配置。新增路线说明明确：第二轮工具没有废弃，而是转为补缺采集和真实试验数据质量工具。
+
+三份当前操作文档均一致声明公开数据为主、人工采集为补充，且 TAMPAR/公开图片不得伪造连续节点。
+
+### 11. 安全检查
+
+对本轮新增和修改内容执行 UTF-8/二进制检查、冲突标记扫描和凭据/隐私模式扫描。结果：没有新增 NUL 字节、乱码、真实手机号、长数字运单号、凭据、私钥、Roboflow 认证信息或个人路径。本轮内容中的 Token、Cookie、手机号、地址和运单号只出现在禁止记录的规则中；历史反馈保持只追加、不覆盖。
+
+### 12. Git状态
+
+本轮工作限定在 `docs/` 下的 Markdown 文件。提交前使用显式路径暂存，不使用 `git add .`。实现提交和推送结果以本轮最终返回为准。本节不表示公开数据治理功能已经完成。
+
+### 13. 回滚方法
+
+原始两份预存文档仍完整保存在 `stash@{0}`。提交前可从 stash 只读查看或在干净临时分支使用 `git stash apply "stash@{0}"` 恢复；不得直接 pop。文档提交形成后，优先使用 `git revert <本轮文档提交哈希>` 回滚远程历史。stash 在用户确认文档 PR 合并前保持不删除。
+
+### 14. 后续公开数据治理任务恢复条件
+
+只有满足以下条件后，才恢复公开数据治理开发：
+
+1. 本文档分支完成审查并合并到 `origin/main`；
+2. 本地 `main` 与 `origin/main` 一致且工作树干净；
+3. 两个第二轮提交仍可在 `origin/main` 中验证；
+4. E 盘和正式 Python 环境通过前置检查；
+5. 外部数据最终核验、许可证、来源登记、数量和 TAMPAR 哈希全部通过；
+6. 原 stash 按用户决定保留或在后续独立轮次安全清理。
+
+下一轮不得把本次文档整理误报为公开数据治理功能已经完成，也不得跳过治理审计直接训练模型。
