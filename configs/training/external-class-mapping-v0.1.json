@@ -1,0 +1,65 @@
+{
+  "mapping_version": "0.1",
+  "sources": {
+    "roboflow-defect-cardboard-h0kjy-v1": {
+      "dataset_name": "defect-cardboard",
+      "dataset_version": "1",
+      "provider": "Roboflow Universe",
+      "source_url": "https://universe.roboflow.com/salima/defect-cardboard-h0kjy",
+      "local_path": "raw/roboflow/defect-cardboard-h0kjy",
+      "license_id": "CC-BY-4.0",
+      "license_name": "CC BY 4.0",
+      "license_file_relpath": "registry/licenses/CC-BY-4.0-legalcode.txt",
+      "citation_file_relpath": "registry/citations/roboflow-defect-cardboard-h0kjy-v1.bib",
+      "usage_scope": "noncommercial_competition_research_with_attribution",
+      "classes": {
+        "dent": {"mapped_project_status": "direct", "mapped_project_class": "D02", "project_task": "damage_detection", "requires_manual_review": false},
+        "hole": {"mapped_project_status": "direct", "mapped_project_class": "D03", "project_task": "damage_detection", "requires_manual_review": false},
+        "dirt": {"mapped_project_status": "candidate", "mapped_project_class": "D04", "project_task": "damage_detection", "requires_manual_review": true},
+        "defects-in-cardboards": {"mapped_project_status": "unmapped", "mapped_project_class": "", "project_task": "research_only", "requires_manual_review": true}
+      }
+    },
+    "roboflow-damaged-box-detection-v1": {
+      "dataset_name": "Damaged Box Detection",
+      "dataset_version": "1",
+      "provider": "Roboflow Universe",
+      "source_url": "https://universe.roboflow.com/project-33xgh/damaged-box-detection",
+      "local_path": "raw/roboflow/damaged-box-detection",
+      "license_id": "CC-BY-4.0",
+      "license_name": "CC BY 4.0",
+      "license_file_relpath": "registry/licenses/CC-BY-4.0-legalcode.txt",
+      "citation_file_relpath": "registry/citations/roboflow-damaged-box-detection-v1.bib",
+      "usage_scope": "noncommercial_competition_research_with_attribution",
+      "classes": {
+        "undamagedpackages": {"mapped_project_status": "general_only", "mapped_project_class": "NORMAL", "project_task": "damage_binary_classification", "requires_manual_review": false},
+        "damagedpackages": {"mapped_project_status": "general_only", "mapped_project_class": "ABNORMAL_GENERAL", "project_task": "damage_binary_classification", "requires_manual_review": false}
+      }
+    },
+    "zenodo-tampar-10057090": {
+      "dataset_name": "TAMPAR",
+      "dataset_version": "1.0",
+      "provider": "Zenodo",
+      "source_url": "https://zenodo.org/records/10057090",
+      "local_path": "raw/zenodo/tampar",
+      "license_id": "CC-BY-4.0",
+      "license_name": "CC BY 4.0",
+      "license_file_relpath": "registry/licenses/CC-BY-4.0-legalcode.txt",
+      "citation_file_relpath": "registry/citations/zenodo-tampar-10057090.bib",
+      "usage_scope": "noncommercial_competition_research_with_attribution",
+      "default_mapping": {"mapped_project_status": "change_detection_only", "mapped_project_class": "", "project_task": "change_detection", "requires_manual_review": true}
+    },
+    "spb-public-statistics": {
+      "dataset_name": "国家邮政局公开统计",
+      "dataset_version": "2024-2026",
+      "provider": "中华人民共和国国家邮政局",
+      "source_url": "https://www.spb.gov.cn/gjyzj/c100276/common_list.shtml",
+      "local_path": "public-stats/spb",
+      "license_id": "",
+      "license_name": "",
+      "license_file_relpath": "",
+      "citation_file_relpath": "",
+      "usage_scope": "industry_background_only_pending_usage_review",
+      "default_mapping": {"mapped_project_status": "unmapped", "mapped_project_class": "", "project_task": "industry_statistics", "requires_manual_review": true}
+    }
+  }
+}

@@ -901,3 +901,267 @@ pilot batch 流程不再用于大规模人工采集。它保留为 D01、D05、�
 6. 原 stash 按用户决定保留或在后续独立轮次安全清理。
 
 下一轮不得把本次文档整理误报为公开数据治理功能已经完成，也不得跳过治理审计直接训练模型。
+
+## 公开数据集治理与统一适配
+
+### 1. 前置分支合并验收
+
+执行 `git fetch origin` 后，`origin/main` 为 `bb72bb2a1f27811f478bd52b6a3d8ba456230add`。以下祖先检查退出码全部为 `0`：
+
+- 第二轮实现：`c99efa44498017f469dda32ed58dda91485edc37`；
+- 第二轮反馈：`49c0cee147f87956e24d8988567aa0c638d37de6`；
+- 数据路线文档：`8ae5147818bbc65688d75a801a20acf16f3177f6`。
+
+本地 `main` 使用 `git pull --ff-only origin main` 快进到同一提交，然后从该提交创建 `feat/training-external-data-governance-v01`。未执行 merge、rebase 或 cherry-pick。
+
+### 2. 本轮目标
+
+建立公开数据来源治理、统一外部 manifest、许可证和类别映射审计、精确重复与 split 泄漏审计、隔离清单、成员 C 审核工作清单及训练任务可用性报告。外部 manifest 与内部 21 字段连续物流 manifest 完全隔离。本轮没有训练模型、下载数据、下载权重、安装依赖或导出 ONNX。
+
+### 3. 开始前 Git 状态
+
+开始时工作树干净，远程地址为 `https://github.com/shiqi64728/jianzheng-package-trace.git`，无用途不明的未跟踪文件。`.git/MERGE_HEAD`、`.git/rebase-merge`、`.git/rebase-apply`、`.git/CHERRY_PICK_HEAD` 均不存在。E 盘 `HealthStatus=Healthy`、`OperationalStatus=OK`。
+
+### 4. Stash 状态
+
+保留项仍为：
+
+```text
+stash@{0}: On feat/training-pilot-batch-audit-v01: preexisting member-c collection docs before external-data route migration
+stash commit: a05a8c51396e2c90346df03c65f59778f993b22d
+```
+
+本轮没有 apply、pop、drop 或 clear stash。
+
+### 5. 外部数据区完整性验收
+
+只读检查了 README、方案 A 获取报告、最终核验、结构变更报告/清单、来源登记、许可证、引用、下载完整性、映射、TAMPAR 和国家邮政局统计材料。结果：最终核验 `10/10`；图片 `7,935` 张且全部可读；defect-cardboard `1,036` 张、`16,592` 条标注；Damaged Box Detection `4,148` 张、已知重复额外图片 `176` 张；TAMPAR `2,751` 个图像资产，归档 `6,407,977,888` 字节；国家邮政局公开文章 `36` 篇、结构化指标 `406` 行。没有 `.partial` 或未完成下载分片。
+
+TAMPAR 归档：MD5 `7a92e796a263998ab5437399f1771fcb`，SHA-256 `08a2e721b28665a75db7c8a90c91b2a98905d05d74c568950d11b081935241e1`，与既有核验一致。
+
+### 6. raw 开始前快照
+
+新增 `E:\JianZhengData\external\reports\governance-preflight-snapshot-v0.1.json`。关键值：
+
+- `raw`：7,952 个文件，13,339,506,276 字节，metadata tree SHA-256 `eb6840b344f1a071fdd99b14984b5e3b38f67b07fad99aafd11f48960047d07c`；
+- defect-cardboard：1,043 个文件，97,031,634 字节；
+- Damaged Box Detection：4,152 个文件，285,199,215 字节；
+- TAMPAR：2,757 个文件，12,957,275,427 字节；
+- SPB raw HTML：42 个文件，3,194,399 字节；
+- licenses：1 个文件，18,657 字节；citations：3 个文件，940 字节；
+- 另记录 TAMPAR 归档、三份 defect COCO、两份 TAMPAR COCO 和 CC BY 4.0 法律文本的 SHA-256。
+
+### 7. external/tools 审查
+
+只读审查 8 个脚本：`audit_external_datasets_v01.py`、`build_final_report_v01.py`、`crawl_spb_stats_v01.py`、`download_roboflow_public_v01.py`、`download_zenodo_multipart_v01.py`、`finalize_structure_report_v01.py`、`init_registry_v01.py`、`update_registry_v01.py`。
+
+复用了流式 SHA-256、图片/COCO 校验、精确重复分组和归档安全检查等通用思路，并在 Git 仓库内重新实现为参数化、可测试、只读 raw 的工具。没有整体复制脚本；没有修改 `external/tools`；没有执行下载、网络爬取、浏览器自动化或解压/删除逻辑；没有读取、输出或提交 Roboflow 凭据。硬编码绝对路径和一次性报告/登记逻辑未复用。
+
+### 8. 实际执行命令
+
+主要执行链为：
+
+```powershell
+& $python -m unittest discover -s "E:\Artificial-intelegence-training\tests" -v
+& $python scripts\dataset\validate_external_registry.py --source-registry ... --licenses-dir ... --citations-dir ... --external-schema ... --external-root ... --report ...
+& $python scripts\dataset\build_external_manifests.py --external-root ... --source-registry ... --external-schema ... --class-mapping ... --output-dir ... --report ...
+& $python scripts\dataset\audit_external_datasets.py --external-root ... --manifests-dir ... --source-registry ... --class-mapping ... --report-dir ...
+& $python scripts\dataset\build_external_review_worklist.py --manifests-dir ... --report-dir ... --seed 20260803
+& $python -m ruff check scripts\dataset tests\dataset
+& $python -m ruff format --check scripts\dataset tests\dataset
+& $python -m py_compile <scripts/dataset 与 tests/dataset 的 18 个 Python 文件>
+& $python -m pip check
+```
+
+所有真实输出只写入 `converted`、`quarantine` 和 `reports`。一次初始局部 unittest discover 因 start directory 导致模块路径不适用，随后严格使用项目规定的完整 discover 命令复验，产品测试为 92/92 通过。
+
+### 9. Git 仓库新增和修改文件
+
+实现提交新增 17 个文件：
+
+- 配置：`configs/training/external-source-schema-v0.1.json`、`configs/training/external-class-mapping-v0.1.json`；
+- 模板：`dataset/external/templates/README.md`、`external-manifest-v0.1.template.csv`、`external-manifest-v0.1.example.csv`；
+- 文档：`docs/dataset/external-data-governance-v0.1.md`、`docs/dataset/external-class-mapping-v0.1.md`；
+- 脚本：`scripts/dataset/external_data_common.py`、`validate_external_registry.py`、`build_external_manifests.py`、`audit_external_datasets.py`、`build_external_review_worklist.py`；
+- 测试：`tests/dataset/external_test_support.py` 以及 4 个 `test_*.py`。
+
+本反馈章节仅追加修改 `docs/feedback/r9000p-main-training.md`。没有删除或重命名 Git 文件；未修改 `.gitignore`，因为真实数据和输出位于仓库外，且采用显式暂存路径即可防止误提交。内部 manifest schema、图像质量阈值以及前三个既有 CLI 均未修改。
+
+### 10. 外部数据区新增和修改文件
+
+新增 4 个统一 manifest：
+
+```text
+converted/manifests/defect-cardboard-v0.1.csv
+converted/manifests/damaged-box-detection-v0.1.csv
+converted/manifests/tampar-pairs-v0.1.csv
+converted/manifests/public-stats-v0.1.csv
+```
+
+新增 4 个隔离清单：
+
+```text
+quarantine/manifests/ambiguous-class-records-v0.1.csv
+quarantine/manifests/duplicate-records-v0.1.csv
+quarantine/manifests/blocked-license-records-v0.1.csv
+quarantine/manifests/unresolved-pairs-v0.1.csv
+```
+
+新增 3 个成员 C 工作清单，以及 registry validation、manifest build、license、class mapping、duplicate、readiness、audit summary、preflight/postflight/invariance 共 11 个报告文件，总计新增 22 个派生文件。真实端到端修正后只覆盖了本轮新生成的同名派生输出；没有修改任何本轮开始前已存在文件，没有删除或移动文件。
+
+### 11. 外部来源 schema
+
+`external-source-schema-v0.1.json` 共 47 个唯一字段，包含要求的 31 个基础字段，并扩展原图/标注引用、TAMPAR 配对和统计记录字段。枚举覆盖 classification、bbox、polygon、pair、statistics、none，以及映射、任务和隔离状态。所有路径均相对 `E:\JianZhengData\external`，统一使用 POSIX 相对路径。schema 明确禁止 `package_id`、`sequence_id`、`node_id`、`capture_time`、`first_abnormal_node`；实际字段中不存在这些内部业务字段。
+
+模板和示例均带 UTF-8 BOM；模板只有表头；示例只有 4 条虚拟的 classification、bbox、pair、statistics 记录，没有真实外部数据或个人信息。
+
+### 12. 类别映射配置
+
+- `dent -> direct / D02 / damage_detection`；
+- `hole -> direct / D03 / damage_detection`；
+- `dirt -> candidate / D04 / damage_detection / requires_manual_review=true`；
+- `undamagedpackages -> general_only / NORMAL / damage_binary_classification`；
+- `damagedpackages -> general_only / ABNORMAL_GENERAL / damage_binary_classification`；
+- TAMPAR 默认 `change_detection_only`，不映射 D01—D05；
+- 国家邮政局统计 `unmapped / industry_statistics`，许可证/引用未形成独立证据时输出 blocked。
+
+### 13. defect-cardboard 适配
+
+真实解析 train/valid/test COCO，共生成 1,036 条图像级记录并保留 16,592 条嵌套稳定标注引用。原 image id、annotation id、类别、bbox、宽高、split、图像 SHA-256 和 COCO 相对路径均可追溯。没有把 bbox 伪造成 polygon，没有修改 COCO、没有复制图片。
+
+状态为 accepted 711、review_required 325。含 dirt 的图像记录 184 条，均保持 D04 候选语义；无标注图像等不明确情况不会被伪造损伤标签。
+
+### 14. Damaged Box Detection 适配
+
+生成 4,148 条分类记录：damagedpackages 2,478、undamagedpackages 1,670；保留 train 3,744、valid 302、test 102。只映射到 ABNORMAL_GENERAL/NORMAL，没有生成 D01—D05。`parent_or_augmented_from` 不做无证据猜测，增强语义只记录在 notes。精确重复只分组，不删除图片。
+
+### 15. TAMPAR 配对适配
+
+生成 2,751 条资产记录并保留真实 COCO 的 732 条 polygon/bbox/keypoints 引用；未扩展不存在的损伤标注。配对仅依据同 split、明确 parcel 标识和相邻采集时间形成 probable：949 条；无法可靠配对的 66 条为 unresolved 并进入审核；confirmed 为 0。其余 base、normal box、UV map 等保持原用途。直接位于 unlabeled/test 的 66 个文件统一标为 `original_operation_type=unlabeled`，不把文件名误当作操作类型。
+
+未把 reference/tampered 伪造成 N1/N2，未生成内部 package、sequence、node、capture_time 或责任字段。
+
+### 16. 国家邮政局统计适配
+
+生成 406 条 statistics 记录，保留文章标题、发布日期、统计期间、指标、数值、单位、同比、获取时间和原始 HTML SHA-256。统计数据不进入图像训练 manifest。由于该来源没有独立进入 source registry，且缺少独立许可证和引用文件，406 条全部 blocked，仅可作为待补证的行业背景资料。
+
+### 17. 许可证审计
+
+四类生成 manifest 中，3 个图像来源许可证/引用证据通过，SPB 统计来源 1 个 blocked，原因组合为 `SOURCE_NOT_IN_REGISTRY|LICENSE_MISSING|CITATION_MISSING`。来源登记验证读取 6 行，3 个已下载来源全部 accepted，0 error、4 warning；warning 仅对应未下载的 metadata-only 来源尚未保留 citation/license 文件，不会进入 accepted 或训练候选。
+
+### 18. 类别映射审计
+
+审计表逐来源/原始类别汇总 image count、annotation count、映射状态、项目类别、任务、人工审核、允许用途、禁止用途和风险。dent/hole 为直接候选，dirt 保持人工审核候选，二分类不细分损伤类型，TAMPAR 仅用于变化检测/表面归一化，SPB 不映射图像类别。
+
+### 19. 数据集内部重复审计
+
+精确 SHA-256 共发现 168 个重复组、176 张额外重复图片，均位于 Damaged Box Detection。隔离清单列出重复组全部 344 个成员记录，原文件未删除。defect-cardboard 和 TAMPAR 未发现精确重复组。
+
+### 20. 跨数据集重复审计
+
+精确 SHA-256 跨数据集重复组为 0，标签冲突组为 0。此结论只覆盖精确文件内容，不等价于感知近重复审计。
+
+### 21. 跨 split 泄漏审计
+
+精确 SHA-256 跨 split 重复组为 0，当前没有已证实的精确 split 泄漏。Damaged Box Detection 的 168 个重复组均在 train 内，但后续冻结数据版本前仍应按重复组去重选样，并补充感知近重复检查。
+
+### 22. 隔离清单
+
+- ambiguous class：250 条，其中 184 条含 dirt 的 D04 候选、66 条 TAMPAR unresolved；
+- duplicate records：344 条，对应 168 个精确重复组；
+- blocked license：406 条 SPB statistics；
+- unresolved pairs：66 条 TAMPAR。
+
+清单只记录相对路径、原因和建议动作，没有移动、删除、改名或修改原文件。
+
+### 23. 成员 C 人工审核工作清单
+
+固定 seed `20260803`，稳定 SHA-256 排序，不使用 Python 内置 `hash()`。输出均为 UTF-8 BOM，只含相对路径，审核结论列为空：
+
+- defect-cardboard：90 条（dent 20、hole 20、dirt 50）；
+- Damaged Box Detection：424 条（normal 30、damaged 50、重复记录 344）；
+- TAMPAR：96 条（probable 30、unresolved 66、confirmed 0）。
+
+没有复制图片，输入顺序变化不改变抽样结果。
+
+### 24. 可训练性评估
+
+- 完好/损伤二分类：`ready_with_review`；
+- D02/D03 目标检测：`ready_with_review`；
+- D04 候选目标检测：`not_ready`；
+- 实例分割：`not_ready`；bbox 不能证明损伤实例 polygon；
+- TAMPAR 前后变化检测：`ready_with_review`；
+- TAMPAR 表面归一化：`ready_with_review`；
+- 真实连续物流节点定位：`not_ready`。
+
+所有 `ready_with_review` 仍须满足许可证证据、人工审核、重复控制和版本冻结条件，不代表已经批准训练。
+
+### 25. 新增自动化测试
+
+新增 33 项测试：registry 6、manifest builder 11、audit 8、review worklist 8。全部使用 `TemporaryDirectory`、合成图片、虚拟 COCO/分类目录/TAMPAR/许可证/registry，不依赖 13.35 GB 真实数据。覆盖要求的映射、标注保留、缺图失败、原文件不变、重复/冲突/split、readiness、稳定抽样、BOM、相对路径和空审核结论。
+
+### 26. 原 59 项兼容性
+
+最终完整测试为 92/92 通过、0 failure、0 error；原 59 项全部继续通过。未修改：
+
+```text
+configs/training/manifest-schema-v0.1.json
+configs/training/image-quality-v0.1.json
+scripts/dataset/validate_manifest.py CLI
+scripts/dataset/init_pilot_batch.py CLI
+scripts/dataset/audit_image_quality.py CLI
+```
+
+### 27. 真实数据只读端到端验证
+
+执行顺序为 registry validation → 4 个 manifest 构建 → 7,935 张图片/17,324 条标注完整性审计 → license/mapping/duplicate/split 审计 → 4 个隔离清单 → 3 个工作清单 → readiness 报告。完整性 issue 为 0，`raw_modified=false`。manifest 行数分别为 1,036、4,148、2,751、406。
+
+首次真实生成后发现 66 个直接位于 TAMPAR `unlabeled/test` 的文件名不应被视为操作类型；修正适配逻辑、增加回归测试并完整复跑生成/审计/工作清单，最终语义为 `unlabeled`。
+
+### 28. raw 结束后快照及不变性
+
+新增 `governance-postflight-snapshot-v0.1.json` 和 `governance-raw-invariance-v0.1.json`。比较 35 个文件数、总字节、最新 mtime、metadata tree SHA-256 和代表性内容 SHA-256 检查项，最终 `35/35` 一致、`changed_check_count=0`、`raw_unchanged=true`。
+
+第一次比较器使用区分大小写的排序，与 Windows 前置快照的 case-insensitive 排序算法不一致，产生 2 个 metadata tree 假阳性；改正比较器排序后重新计算，文件数、字节、mtime 和内容哈希始终未变。最终 raw 仍为 7,952 个文件、13,339,506,276 字节，TAMPAR SHA-256 仍为 `08a2e721b28665a75db7c8a90c91b2a98905d05d74c568950d11b081935241e1`。
+
+### 29. Ruff 和 py_compile
+
+`ruff check` 全部通过；`ruff format --check` 报告 18 个 Python 文件已格式化；对 `scripts/dataset` 和 `tests/dataset` 的 18 个 Python 文件执行 `py_compile` 全部通过。实现使用 Python 3.12、类型标注、argparse、pathlib、明确 JSON/CSV 编码；没有 bare except、吞异常、内置 `hash()` 稳定 ID 或凭据逻辑。
+
+### 30. 环境复验
+
+正式解释器仍为 `D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe`：Python 3.12.13，pip check 无损坏依赖，PyTorch 2.13.0+cu130，CUDA=True，GPU=`NVIDIA GeForce RTX 5060 Laptop GPU`，OpenCV 5.0.0，NumPy 2.4.4，pandas 3.0.3。本轮未安装或升级依赖，未修改 PATH、PowerShell 策略、Miniconda base、CUDA/cuDNN 或 IDE 全局设置。
+
+### 31. Git 状态
+
+实现提交为 `574aa3070a0e762805dbfe76a00f346eb4fb70d1`，提交说明 `feat(training): add external dataset governance and adapters`。实现提交包含 17 个新增文件、3,198 行新增。反馈采用独立提交；反馈提交哈希和推送后的最终工作树状态以本轮最终回复为准。暂存均使用显式文件路径，未使用 `git add .`。
+
+### 32. 已知限制
+
+1. SPB 统计缺少独立 source registry、license 和 citation 证据，当前全部 blocked；
+2. D04 的 dirt 语义不能自动等同受潮；
+3. TAMPAR 没有 confirmed pair，probable 仍需人工确认；
+4. TAMPAR 和公开图片不提供真实物流节点或责任事实；
+5. Damaged Box Detection 只能支持二分类，不能证明 D01—D05；
+6. 当前重复审计为精确 SHA-256，不覆盖视觉近重复；
+7. 本轮没有建立可训练冻结版本，也没有训练任何模型。
+
+### 33. 未完成事项
+
+成员 C 尚未填写 610 条工作清单记录；D04 尚未批准或否决；重复组尚未从训练候选版本中按组处理；TAMPAR probable/unresolved 尚未人工复核；首个训练任务的数据版本尚未冻结；SPB 许可证/引用证据尚未补齐。上述事项均按范围留给下一轮，本轮未扩展到训练。
+
+### 34. 风险
+
+主要风险为 dirt 类别歧义、二分类背景偏差、增强/近重复导致的泛化高估、TAMPAR probable 误配、许可证证据不足以及把公开外观数据错误外推为真实物流责任证据。训练前必须以人工审核结论和冻结数据版本为准，跨 split 应按内容组而非单文件随机拆分。
+
+### 35. 回滚方法
+
+Git 实现可用 `git revert 574aa3070a0e762805dbfe76a00f346eb4fb70d1` 回滚；反馈提交形成后单独 revert 该提交。外部区 22 个文件全部为本轮派生输出，可按本节第 10 项列出的显式路径删除后重新生成；不得删除、移动或覆盖 raw、SPB raw HTML、licenses 或 citations。原 stash 保持不动，不得 pop/drop/clear。
+
+### 36. 推荐的首个模型任务
+
+推荐在成员 C 审核完成后，先冻结仅含已批准 dent/hole 的 D02/D03 目标检测数据版本：保留真实 bbox，排除未批准 dirt，按精确重复组和后续近重复组控制 split。该建议只是下一轮候选，本轮未训练模型。
+
+### 37. 下一轮建议
+
+仅建议依次完成：成员 C 审核工作清单；批准或否决 D04 候选；清理训练候选中的跨 split/近重复风险；冻结第一个任务的数据版本；然后在二分类、D02/D03 检测或 TAMPAR 变化检测中只选择一个基线。暂不进行多任务融合，不声称已具备真实连续节点定位或责任认定能力。
