@@ -1315,3 +1315,185 @@ Git 实现可用 `git revert 504ca5fe5cee7ee554ed0a661dd0fc7ba0c8b3e8` 回滚；
 ### 37. 下一轮建议
 
 下一轮只选一个方向并建立对照：优先对 1,065 条自动失败记录做人工归因，针对小目标、背景漏检和 D02 低召回制定单变量增强或类别不平衡实验；也可在冻结同一数据版本上做 YOLO26s 对照。D04 必须先由成员 C 审核后才能训练；TAMPAR、二分类和连续节点应作为独立任务，不能与本基线混在同一轮。不要把当前 test 当作反复调参集。
+
+## D02/D03 YOLO26n 960输入分辨率单变量实验
+
+### 1. 实验假设
+
+在 YOLO26n、官方预训练权重、冻结数据、split、seed 和训练策略完全相同的条件下，只将 `imgsz` 从 640 提高到 960，验证能否改善总体定位质量、D02 Recall 以及小目标/低 IoU 问题。本轮没有训练 YOLO26s、修改增强、扫 confidence、访问 candidate test 或执行第二个实验。
+
+### 2. Git前置验收
+
+开始时工作树干净，无 merge/rebase/cherry-pick，E 盘 Healthy/OK。`origin/main` 为 `a3d19db706e1fdf43a259eecc92f28bb530d985b`；上一轮实现 `504ca5fe5cee7ee554ed0a661dd0fc7ba0c8b3e8` 与反馈 `b1b91213e4a308e35329c5abdeb2e6c179946d71` 均是 origin/main 祖先。main fast-forward 后创建 `experiment/training-d02-d03-yolo26n-imgsz960-v01`。旧 stash 仅查看，未 apply/pop/drop/clear。
+
+### 3. 环境验收
+
+解释器为 `D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe`：Python 3.12.13、PyTorch 2.13.0+cu130、torchvision 0.28.0+cu130、Ultralytics 8.4.102、OpenCV 5.0.0、NumPy 2.4.4、pandas 3.0.3。CUDA=True，GPU=`NVIDIA GeForce RTX 5060 Laptop GPU`，总显存 8,546,484,224 字节。CUDA 正反向验证和 `pip check` 均通过，未安装或升级依赖。
+
+### 4. 原117项测试
+
+实验开始前完整回归为 117/117 PASS、FAIL 0、ERROR 0；任何旧测试均未跳过、删除或放宽。
+
+### 5. dataset-lock复核
+
+只验证现有 `E:\JianZhengData\training\detect-d02-d03-v0.1`，没有重建 v0.1 或创建 v0.2。`dataset-lock.json` SHA-256 仍为 `6d496281ade6486434c0eb85a473b2bd3e8e5574bcc51ca1d371895851ea6e97`；711 张图片与 711 个标签配对，train/val/test=614/64/33，D02/D03 bbox=9,514/1,790，图片树与标签树 SHA-256 仍为 `26e256f...` 与 `8efc3abd...`。
+
+### 6. pretrained权重复核
+
+`E:\JianZhengData\models\pretrained\ultralytics\yolo26n.pt` 大小仍为 5,544,453 字节，SHA-256 仍为 `9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef`。YOLO detect 加载与 640 合成输入 CUDA 推理通过；没有重新下载。960 正式训练从该权重开始，没有从 640 best.pt fine-tune。
+
+### 7. GT目标尺寸分布
+
+共分析 11,304 个 GT bbox，train/val/test bbox 为 8,335/1,981/988。归一化面积 min/Q25/Q50/Q75/max 为 `0.00004395 / 0.00228470 / 0.00456177 / 0.00941772 / 0.16707947`。按整体 Q25/Q50/Q75 划分，四个 quartile 各 2,826 个框，不使用人为绝对小目标阈值。
+
+### 8. D02目标尺寸分布
+
+D02 共 9,514 个 bbox，自身面积 Q25/Q50/Q75 为 `0.00255371 / 0.00479309 / 0.00966171`。按整体 quartile 分布：smallest 2,003、q2 2,583、q3 2,481、largest 2,447。
+
+### 9. D03目标尺寸分布
+
+D03 共 1,790 个 bbox，自身面积 Q25/Q50/Q75 为 `0.00133240 / 0.00260376 / 0.00806259`。按整体 quartile 分布：smallest 823、q2 243、q3 345、largest 379；D03 明显更集中于小目标区间。
+
+### 10. 基线失败与目标尺寸关联
+
+上一轮发布的失败计数来自 test，本轮禁止复用它选择 candidate。本轮重新对同一个 val 运行 640 baseline，并用 `image_relpath + label_index` 将每条主要失败可靠关联到 GT bbox。640 val 各 quartile 失败率从小到大为 79.298%、59.747%、51.570%、40.596%；D02 对应为 80.242%、60.000%、52.182%、40.467%。这证明失败率与目标尺寸存在明显关联，而不是只依据名称猜测。
+
+### 11. 640基线val复现
+
+640 best.pt 在 val、imgsz 640 上复现：Precision 0.331108、Recall 0.242798、mAP50 0.193225、mAP50-95 0.083132；D02 为 0.292472/0.192493/0.131522/0.037191，D03 为 0.369744/0.293103/0.254927/0.129074。全部指标在 1e-6 容差内逐值复现上一轮，因此允许继续训练。
+
+### 12. 640模型在960纯推理结果
+
+同一个 640 best.pt 仅把 val 推理尺寸改为 960 后：Precision 0.301011、Recall 0.234115、mAP50 0.178323、mAP50-95 0.068943；D02 为 0.237314/0.218231/0.117220/0.031462，D03 为 0.364708/0.250000/0.239426/0.106424。inference 为 8.025 ms/image。纯提高推理尺寸整体退化，不能替代 960 重新训练。
+
+### 13. 实验配置差异审计
+
+`experiment-config-diff.json` 通过。主动参数差异只有 `imgsz:640→960`；其他许可差异仅为 experiment_id、正式/smoke 名称以及 baseline/candidate/comparison 外部路径引用。dataset、model、seed、epochs、patience、optimizer、workers、cache、deterministic、AMP、增强默认值均未改变；非许可差异为 0。
+
+### 14. 960 smoke test
+
+3/3 epoch 完成，实际 batch 4，总耗时 72.387 秒，平均 24.129 秒/epoch，best epoch 3。AutoBatch、AMP、有限 loss、checkpoint、validation 和绘图均正常，无 NaN/Inf、无无法恢复 OOM。记录的 PyTorch peak allocation 为 9,487,895,040 字节，包含 AutoBatch 探测。
+
+### 15. 正式960训练配置
+
+YOLO26n、imgsz 960、epochs 100、patience 25、batch -1、device 0、workers 4、cache false、seed 42、deterministic true、optimizer auto、pretrained true、AMP true、save_period 10。没有设置 lr、momentum、weight decay、box/cls/dfl、multi_scale、mosaic 或 close_mosaic 覆盖值。
+
+### 16. 正式训练过程
+
+2026-08-11 11:45:06+08:00 开始，12:30:53+08:00 结束；完成 100/100 epoch，无 early stop、OOM 或 NaN/Inf。实际 batch 3，总耗时 2,747.331 秒（约 45 分 47 秒），平均 27.473 秒/epoch；固定目录没有生成 train2/train3。正式 epoch 日志中训练 GPU memory 约 1.25–1.81 GiB。
+
+### 17. 960 best epoch
+
+按 Ultralytics 一基 epoch 编号，best epoch 为 99，last epoch 为 100。best.pt 与 last.pt 均可加载；本轮 candidate 选用 best.pt，但不自动晋级 release。
+
+### 18. 960总体val指标
+
+best.pt val：Precision 0.358709、Recall 0.261359、mAP50 0.221814、mAP50-95 0.094648。last.pt val：Precision 0.332003、Recall 0.269789、mAP50 0.223085、mAP50-95 0.093839。
+
+### 19. 960 D02指标
+
+D02 best.pt val：Precision 0.289831、Recall 0.203753、AP50 0.138476、AP50-95 0.040010。
+
+### 20. 960 D03指标
+
+D03 best.pt val：Precision 0.427588、Recall 0.318966、AP50 0.305152、AP50-95 0.149285。
+
+### 21. 640 vs 960总体比较
+
+总体 Precision `+0.027601/+8.336%`，Recall `+0.018561/+7.645%`，mAP50 `+0.028589/+14.796%`，mAP50-95 `+0.011516/+13.852%`。四项总体指标均提高。
+
+### 22. 640 vs 960 D02比较
+
+D02 Precision `-0.002642/-0.903%`，Recall `+0.011260/+5.850%`，AP50 `+0.006954/+5.287%`，AP50-95 `+0.002819/+7.581%`。目标中的 D02 Recall 和 AP 有改善，但 Precision 略降。
+
+### 23. 640 vs 960 D03比较
+
+D03 Precision `+0.057844/+15.644%`，Recall `+0.025862/+8.824%`，AP50 `+0.050225/+19.702%`，AP50-95 `+0.020212/+15.659%`。D03 没有明显回退。
+
+### 24. 小目标失败比较
+
+以整体 smallest quartile 定义小目标：640 val 为 226，960 val 仍为 226，变化 0。总体最小四分位失败率均为 79.298%；D02 最小四分位失败率由 80.242% 升至 82.258%。因此提高训练分辨率没有解决最小四分位问题，改善主要来自更大目标。
+
+### 25. 低IoU比较
+
+low IoU 从 842 降至 817，减少 25，变化 -2.969%。存在小幅改善，但幅度明显小于总体 mAP50-95 的相对增益。
+
+### 26. 背景错误比较
+
+best.pt val 混淆矩阵的背景相关错误从 1,989 降至 1,968，减少 21；正确类别分配从 285 增至 287。D02/D03 跨类混淆从 1 增至 5。自动失败分析中的高置信假阳性从 89 降至 52，减少 37。
+
+### 27. 训练时间比较
+
+总训练时间从 1,180.176 秒增至 2,747.331 秒，增加 1,567.155 秒，相对 +132.790%。平均 epoch 从 11.802 秒增至 27.473 秒，同样 +132.790%。
+
+### 28. 推理速度比较
+
+同一 val 正式评估的 inference 从 6.471 ms/image 增至 8.191 ms/image，增加 1.720 ms/image，相对 +26.578%。另有 preprocess 1.408→2.515 ms/image、postprocess 0.346→1.742 ms/image；速度数据会受单次运行和系统调度影响。
+
+### 29. 显存比较
+
+同一 PyTorch `max_memory_allocated` 口径从 4,727,974,912 增至 10,620,080,640 字节，增加 5,892,105,728 字节，+124.622%。该口径包含 AutoBatch 探测；Windows WDDM 可用共享内存支持分配，因此候选数字可高于独立显存，不代表稳定 epoch 的常驻独立显存。物理 batch 从 8 降至 3。
+
+### 30. qualitative对照
+
+从 val 以 seed 42 确定性选择同一批 20 张；每张均保存 GT、640 baseline 和 960 candidate 三份可视化及统一 manifest。没有另抽更好看的 candidate 样本，没有修改原图或标签。
+
+### 31. candidate模型制品
+
+candidate 位于 `E:\JianZhengData\models\experiments\d02-d03-yolo26n-imgsz960-v0.1`，包含 best.pt、last.pt 路径/哈希引用、experiment config、val metrics、comparison、failure summary、experiment model card 和 best SHA 文件。best.pt SHA-256 为 `2dd857412b63df66d1273b326dc51afaed895da1d360c97e184762c882181a97`。正式 release 目录和 640 best.pt 未修改。
+
+### 32. test封存确认
+
+对象尺寸分析只读取 test GT 做数据描述；数据完整性预检只扫描 test 文件/标签。960 candidate 没有在 test 上执行 inference、validation、失败分析或 qualitative，没有 candidate test 指标、test 输出目录或 test payload。最终制品均登记 `candidate_test_accessed=false`。
+
+### 33. 自动测试
+
+新增 20 项：目标尺寸分析 6 项、实验比较 14 项。覆盖分位数复现与顺序不变、D02/D03 统计、640/960 投影、拒绝覆盖、配置单变量审计、dataset-lock/pretrained 哈希漂移、candidate/release 路径隔离、绝对/相对差值、per-class 关联、test 拒绝、qualitative 同样例及 640/960 配置兼容。
+
+### 34. 原117项兼容性
+
+最终 137/137 PASS、FAIL 0、ERROR 0；原 117 项全部继续通过，没有用删除或跳过旧测试换取成功。
+
+### 35. Ruff和py_compile
+
+`ruff check scripts tests` 通过；`ruff format --check scripts tests` 报告 28 个 Python 文件均已格式化；scripts/tests 下 28 个 Python 文件全部通过 py_compile。
+
+### 36. raw不变性
+
+`E:\JianZhengData\external\raw` 前后均为 7,952 个文件、13,339,506,276 字节；metadata tree SHA-256 和三个 defect-cardboard 原始 COCO SHA-256 全部相同，`raw_unchanged=true`。
+
+### 37. 冻结数据不变性
+
+按 dataset-lock 管理的不可变内容排除 Ultralytics 派生 `.cache` 后，前后均为 1,431 个文件、33,795,252 字节，metadata tree、关键文件 SHA-256、image tree 和 label tree 全部一致，`frozen_dataset_unchanged=true`。Smoke 的 fraction 会重建派生 `train.cache`，正式全量训练随后重建完整 cache；原始包含 cache 的前置快照被单独保留，不把 cache 冒充模型数据或纳入 dataset-lock。
+
+### 38. 环境复验
+
+结束后 `pip check` 通过；Python/PyTorch/torchvision/Ultralytics/OpenCV/NumPy/pandas 与开始一致，CUDA=True、GPU 名称一致，`memory_allocated=0`、`memory_reserved=0`。未更新依赖、驱动、CUDA、PATH 或全局策略。
+
+### 39. Git状态
+
+实现提交为 `fc355df458921918029bf135c0c062d3073aa7a5`，提交说明 `experiment(training): evaluate YOLO26n at 960 input size`，包含 9 个文件、2,583 行新增和 5 行删除。反馈仅追加本章节并采用独立提交；暂存使用显式路径，未使用 `git add .`。
+
+### 40. 实验结论
+
+960 重新训练使总体 val mAP50-95 提高 13.852%，D02 Recall 提高 5.850%，D02 AP50-95 提高 7.581%，D03 四项指标均改善；同时漏检减少 18.552%、高置信假阳性减少 41.573%、背景错误减少 21。但最小四分位失败数量完全不变，D02 最小四分位失败率略增；代价是 batch 降至 3、训练时间增加 132.790%、推理时间增加 26.578%。所以“总体/D02指标改善”成立，“最小目标问题得到解决”不成立。
+
+### 41. 推荐：PROMOTE_FOR_TEST / KEEP_BASELINE / INCONCLUSIVE
+
+推荐：`PROMOTE_FOR_TEST`。优先级最高的总体 mAP50-95、D02 AP50-95、D02 Recall 和总体 Recall 均改善，D03 未退化，因此可以由用户批准后对 960 candidate 执行一次正式 test。该推荐没有自动晋级模型，也没有在本轮访问 test；在用户批准前正式 release 仍是 640 baseline。
+
+### 42. 已知限制
+
+val 只有 64 张且 bbox 高度集中，失败匹配是自动 IoU 关联，不等于人工审查；最小四分位失败没有改善；PyTorch 显存峰值包含 AutoBatch/WDDM 共享内存效应；推理速度是单机单次测量。模型仍只识别 D02/D03，不能处理 D01/D04/D05、TAMPAR、连续节点或责任认定。
+
+### 43. 风险
+
+主要风险是 val 上的有限提升未必在封存 test 或真实快递站域复现、反复使用 val 形成间接过拟合、把总体提升误解为小目标问题已解决、把 WDDM 峰值误解为稳定独立显存，以及未经批准提前 test 或替换正式 release。
+
+### 44. 回滚方法
+
+Git 实现可 `git revert fc355df458921918029bf135c0c062d3073aa7a5`；反馈提交形成后单独 revert。外部派生内容可按明确目录删除 `smoke-d02-d03-yolo26n-imgsz960-v0.1`、`detect-d02-d03-yolo26n-imgsz960-v0.1`、640-vs-960 comparison 和 models/experiments candidate；不得删除或覆盖 raw、冻结图片/标签、预训练权重或正式 640 release。
+
+### 45. 下一轮建议
+
+下一轮先由用户决定是否接受 `PROMOTE_FOR_TEST`。若批准，只对当前 SHA-256 固定的 candidate best.pt 在封存 test 上执行一次正式评估并与 640 的既有 test 结果比较，不再训练、不调 confidence、不改数据。若不批准，则保持 640 release，并单独设计 smallest-quartile 数据/标注审查，不在同一轮叠加 YOLO26s 或增强变量。
