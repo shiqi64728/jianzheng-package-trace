@@ -66,6 +66,12 @@ lightning_logs/
 *.webm
 *.log
 logs/
+frontend/node_modules/
+frontend/dist/
+*.db
+*.db-shm
+*.db-wal
+/runtime/
 
 # Local credentials and private keys
 .env
