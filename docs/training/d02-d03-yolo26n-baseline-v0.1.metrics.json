@@ -1,0 +1,38 @@
+{
+  "experiment_id": "d02-d03-yolo26n-baseline-v0.1",
+  "dataset_version": "detect-d02-d03-v0.1",
+  "model": "Ultralytics YOLO26n Detection",
+  "best_epoch": 97,
+  "actual_epochs": 100,
+  "early_stopped": false,
+  "actual_batch": 8,
+  "training_duration_seconds": 1180.1764021,
+  "dataset_lock_sha256": "6d496281ade6486434c0eb85a473b2bd3e8e5574bcc51ca1d371895851ea6e97",
+  "pretrained_weight_sha256": "9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef",
+  "best_weight_sha256": "1959fcaf71987e52e5475f7601fc10ca7e40e7b747ddf085705135dccb0ed74f",
+  "last_weight_sha256": "e4e9f4cd6f71efe24bfd85fd571ba931b199f5471e6acfba6e4bf10c1f9ad155",
+  "validation": {
+    "precision": 0.3311082243171223,
+    "recall": 0.2427983729314967,
+    "mAP50": 0.19322484099724105,
+    "mAP50-95": 0.08313219083320952,
+    "D02_surface_dent": {
+      "precision": 0.2924720829,
+      "recall": 0.1924932976,
+      "mAP50": 0.1315223695,
+      "mAP50-95": 0.0371907602
+    },
+    "D03_carton_tear": {
+      "precision": 0.3697443657,
+      "recall": 0.2931034483,
+      "mAP50": 0.2549273125,
+      "mAP50-95": 0.1290736214
+    }
+  },
+  "test": {
+    "precision": 0.4091768614059076,
+    "recall": 0.18597014925373134,
+    "mAP50": 0.18313050733173802,
+    "mAP50-95": 0.0714805047066587
+  }
+}
