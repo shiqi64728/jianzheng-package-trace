@@ -1165,3 +1165,153 @@ Git 实现可用 `git revert 574aa3070a0e762805dbfe76a00f346eb4fb70d1` 回滚；
 ### 37. 下一轮建议
 
 仅建议依次完成：成员 C 审核工作清单；批准或否决 D04 候选；清理训练候选中的跨 split/近重复风险；冻结第一个任务的数据版本；然后在二分类、D02/D03 检测或 TAMPAR 变化检测中只选择一个基线。暂不进行多任务融合，不声称已具备真实连续节点定位或责任认定能力。
+
+## 首个正式基线：D02/D03 YOLO26n目标检测
+
+### 1. 本轮目标
+
+完成且只完成 `detect-d02-d03-yolo26n-baseline-v0.1`：以 defect-cardboard 为唯一数据源，冻结 D02 表面凹陷与 D03 纸箱破口二类 YOLO Detect 数据，使用官方 `yolo26n.pt` 完成 3 epoch smoke、100 epoch 正式训练、best/last 验证、独立 test、20 张定性样例、失败分析和外部 release。未执行第二个模型实验、分割、变化检测、连续节点、责任判定或部署。
+
+### 2. Git前置验收
+
+开始时 `origin/main` 与本地 main 均为 `337248254c590bb4b783a8524d763cd2e2781ca6`，工作树干净，无 merge/rebase/cherry-pick，E 盘为 Healthy/OK。治理实现 `574aa3070a0e762805dbfe76a00f346eb4fb70d1` 与治理反馈 `055b988592570775d3db66b6eafd225e498805ab` 均是 `origin/main` 祖先。随后创建 `experiment/training-d02-d03-yolo26n-baseline-v01`。旧 stash `a05a8c51396e2c90346df03c65f59778f993b22d` 仅查看，未 apply/pop/drop/clear。
+
+### 3. 环境验收
+
+正式解释器为 `D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe`，Python 3.12.13、PyTorch 2.13.0+cu130、torchvision 0.28.0+cu130、Ultralytics 8.4.102、OpenCV 5.0.0、NumPy 2.4.4、pandas 3.0.3。CUDA=True，GPU 为 `NVIDIA GeForce RTX 5060 Laptop GPU`，总显存 8,546,484,224 字节；最小 CUDA 前向/反向验证通过，`pip check` 通过。本轮未安装或升级依赖。
+
+### 4. 治理结果验收
+
+实际读取 `E:\JianZhengData\external\converted`、`quarantine` 和 `reports`。D02/D03 detection 为 `ready_with_review`；defect-cardboard 许可证审计为 passed、无 blocking issue。源 manifest 共 1,036 张，SHA-256 为 `17135603a70f1d2334d2d88e457d5760b96924c01d528d8b2e488f9746865cc2`；治理 accepted 711、review_required 325。精确重复审计在 defect-cardboard 中未发现阻塞重复，跨数据集/跨 split 重复为 0。
+
+### 5. D02/D03数据筛选规则
+
+只允许 `source=defect-cardboard`、许可证 passed、`quarantine_status=accepted`、`mapped_project_status=direct` 且类别为 dent/hole 的记录；dent 固定映射 D02/class 0，hole 固定映射 D03/class 1。文件缺失、不可解码、非法/越界/非正宽高 bbox、未知类、阻塞/待审、精确重复、源身份跨 split 均会失败或排除，不补标签、不修框。
+
+### 6. dirt排除策略
+
+只要图片存在任何 dirt annotation 就整图排除，即使同时含 dent/hole 也不保留，避免删除 dirt bbox 后将真实 dirt 区域错误监督为背景。实际因 `DIRT_PRESENT` 排除 184 张；另外 141 张因 `QUARANTINE_NOT_ACCEPTED` 排除。
+
+### 7. 数据版本冻结
+
+冻结目录为 `E:\JianZhengData\training\detect-d02-d03-v0.1`，版本 `detect-d02-d03-v0.1`。最终包含 711 张、排除 325 张、包含 11,304 个 bbox。图片内容树 SHA-256 为 `26e256f34046faa36f275d1c701c4df5d02c75236b0ce88cd37785210aa2dda5`，标签内容树 SHA-256 为 `8efc3abdba9329d9399526fe48b73408147706efaa4b782a78091aef7a6dc057`，`dataset-lock.json` SHA-256 为 `6d496281ade6486434c0eb85a473b2bd3e8e5574bcc51ca1d371895851ea6e97`。构建器默认拒绝覆盖已冻结目录。
+
+### 8. COCO到YOLO转换结果
+
+COCO `[x_min,y_min,width,height]` 依据真实图片宽高转换为归一化 `class x_center y_center width height`。class 0 为 `D02_surface_dent`，class 1 为 `D03_carton_tear`。所有图片以普通文件逐字节复制，没有重编码、硬链接或符号链接；711/711 个源与副本 SHA-256 一致，错配 0。自定义验证器确认空标签、缺失配对、非法类/坐标、重复、跨 split 重复均为 0；Ultralytics 实际预检成功读取全部 split。
+
+### 9. train/val/test统计
+
+保留原数据集 train/valid/test，只将目录名 valid 规范为 val，未随机重拆 test。最终 train 614 张、val 64 张、独立 test 33 张；Ultralytics 预检分别扫描 614/64/33 张，无 corrupt 或 background-only 记录。
+
+### 10. 类别分布
+
+D02 表面凹陷 bbox 为 9,514，D03 纸箱破口 bbox 为 1,790，总计 11,304。类别明显不平衡，D02 bbox 约为 D03 的 5.31 倍；该事实保留为基线限制，本轮未通过重采样或手工调参改变分布。
+
+### 11. 权重下载来源
+
+仅下载 `yolo26n.pt`，通过当前 Ultralytics 8.4.102 的官方资产解析机制 `ultralytics/assets` 获取，release 为 v8.4.0，来源 URL：`https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n.pt`。文件位于 `E:\JianZhengData\models\pretrained\ultralytics\yolo26n.pt`，未下载其他模型规模，未使用第三方镜像。
+
+### 12. yolo26n.pt SHA-256
+
+官方预训练权重大小 5,544,453 字节，SHA-256 为 `9b09cc8bf347f0fc8a5f7657480587f25db09b34bf33b0652110fb03a8ad4fef`。来源、时间、大小、mtime、Ultralytics/PyTorch/CUDA 版本和加载结果登记在 `E:\JianZhengData\models\pretrained\ultralytics\yolo26n.metadata.json`，不含认证信息。
+
+### 13. 权重加载验证
+
+正式解释器通过 `YOLO(...)` 加载，任务确认为 detect；使用 640×640 合成公开测试输入在 RTX 5060 Laptop GPU 上完成 CUDA 推理，无架构不兼容、损坏或 fallback。
+
+### 14. Smoke test
+
+`E:\JianZhengData\training\runs\smoke-d02-d03-yolo26n-v0.1` 完成 3/3 epoch，`fraction=0.25`、imgsz 640、请求 batch -1、实际 batch 9；耗时 76.089 秒，peak allocated 4,224,707,584 字节。数据读取、有限 loss、CUDA/AMP、checkpoint、validation 和图表均正常，`results.csv` 无 NaN/Inf，best epoch 为 3。一次宿主 shell 等待超时没有终止训练进程；确认原进程正常完成后只读取结果，没有启动重复 smoke。
+
+### 15. 正式训练参数
+
+100 epoch、patience 25、imgsz 640、batch -1、device 0、workers 4、cache false、seed 42、deterministic true、optimizer auto、pretrained true、AMP true、save true、save_period 10。未手动设置 lr0、momentum、weight_decay、box、cls 或 dfl。
+
+### 16. 正式训练过程
+
+固定目录 `E:\JianZhengData\training\runs\detect-d02-d03-yolo26n-v0.1` 完成训练，未生成 train2/train3。实际 batch 8，实际 100/100 epoch，无 early stop、无 OOM、无 NaN/Inf。2026-08-11 10:49:43+08:00 开始、11:09:23+08:00 结束，总耗时 1,180.176 秒，平均 11.802 秒/epoch，peak allocated GPU memory 4,727,974,912 字节。
+
+### 17. best epoch
+
+按 Ultralytics 一基 epoch 编号解析，best epoch 为 97，last epoch 为 100。`best.pt` 与 `last.pt` 均可加载；正式候选固定为 best.pt。针对一基 epoch 解析已增加回归测试，避免把第 97 轮误报为 96。
+
+### 18. 总体验证指标
+
+best.pt 在 val 上：Precision 0.331108、Recall 0.242798、mAP50 0.193225、mAP50-95 0.083132。last.pt 在 val 上：Precision 0.367590、Recall 0.231518、mAP50 0.192978、mAP50-95 0.080858。以 best.pt 的 mAP50-95 选择正式候选，没有用 test 选模型。
+
+### 19. D02指标
+
+best.pt val 的 D02：Precision 0.292472、Recall 0.192493、AP50 0.131522、AP50-95 0.037191。D02 是当前更弱类别，尤其召回和 AP50-95 较低。
+
+### 20. D03指标
+
+best.pt val 的 D03：Precision 0.369744、Recall 0.293103、AP50 0.254927、AP50-95 0.129074。D03 指标高于 D02，但样本 bbox 数更少，结论仍需扩大真实域验证。
+
+### 21. test指标
+
+存在原始合法独立 test，因此用 best.pt 单独评估：总体 Precision 0.409177、Recall 0.185970、mAP50 0.183131、mAP50-95 0.071481。D02 test 为 0.338012/0.111940/0.113480/0.034279，D03 test 为 0.480342/0.260000/0.252781/0.108682（依次 Precision/Recall/AP50/AP50-95）。没有把 val 称为 test。
+
+### 22. 混淆矩阵
+
+best.pt val 混淆矩阵中正确类别分配 285，D02/D03 跨类混淆 1，背景相关漏检/假阳性 1,989。结论是背景相关错误和漏检占主导，D02/D03 互相混淆不是当前首要问题。
+
+### 23. 预测样例
+
+从独立 test 以 seed 42 确定性抽取 20 张；在 `E:\JianZhengData\training\runs\detect-d02-d03-yolo26n-v0.1\qualitative` 保存 20 张预测图、20 张 GT 可视化和 `qualitative-manifest.csv`。原图未修改，预测没有被描述为人工真值。
+
+### 24. 失败案例分析
+
+`failure-analysis-v0.1.csv` 自动生成 1,065 条记录：low_iou 413、small_target_failure 478、high_confidence_false_positive 33、D02_D03_confusion 16、missed_detection 125；同一对象可对应多个失败类型。实际没有生成 large_target_failure 记录。主要失败方向为小目标、低 IoU 与漏检，未修改标签。
+
+### 25. 模型制品
+
+正式 run 保留 best.pt、last.pt、每 10 epoch checkpoint、results.csv/results.png、BoxF1/PR/P/R 曲线、混淆矩阵、args.yaml、run metadata、val/test 评估和定性结果。外部 release 位于 `E:\JianZhengData\models\releases\d02-d03-yolo26n-baseline-v0.1`，包含 best.pt、model-card.md、metrics.json、dataset-lock.json、experiment-config.json、weight-sha256.txt。模型二进制、图片、runs、数据集和大型日志均未进入普通 Git。
+
+### 26. 模型SHA-256
+
+正式 best.pt 位于 `E:\JianZhengData\training\runs\detect-d02-d03-yolo26n-v0.1\weights\best.pt`，SHA-256 为 `1959fcaf71987e52e5475f7601fc10ca7e40e7b747ddf085705135dccb0ed74f`；last.pt SHA-256 为 `e4e9f4cd6f71efe24bfd85fd571ba931b199f5471e6acfba6e4bf10c1f9ad155`。release 副本哈希与正式 best.pt 一致。
+
+### 27. 自动测试结果
+
+新增 25 项轻量测试：数据构建 18 项、配置/训练元数据 7 项。覆盖 dent/hole 映射、dirt 整图排除、class ID、bbox 归一化与非法范围、缺图、治理状态排除、字节复制与 raw 不变、split/跨 split 重复、YAML、可复现 lock、拒绝覆盖、配置解析、外部模型路径、模型限定、禁止手调 recipe 与一基 epoch。最终总计 117/117 通过，失败 0、错误 0。
+
+### 28. 原92项兼容性
+
+训练前原有测试 92/92 通过；训练后完整回归 117/117 通过，因此原 92 项继续兼容，未通过删除、跳过或放宽旧测试换取通过。
+
+### 29. Ruff和py_compile
+
+正式解释器执行 `ruff check scripts tests` 全部通过；`ruff format --check scripts tests` 报告 24 个 Python 文件已格式化；对 scripts/tests 下 24 个 Python 文件执行 `py_compile` 全部通过。
+
+### 30. 环境复验
+
+训练结束后 `pip check` 再次返回 `No broken requirements found`。Python 3.12.13、PyTorch 2.13.0+cu130、torchvision 0.28.0+cu130、Ultralytics 8.4.102、CUDA=True、RTX 5060 Laptop GPU 均保持不变；复验时 `memory_allocated=0`、`memory_reserved=0`。未修改 PATH、默认 Python、PowerShell 策略、CUDA/cuDNN 或驱动。
+
+### 31. raw不变性
+
+训练前后比较 `E:\JianZhengData\external\raw`：文件数 7,952、总字节 13,339,506,276、最新 mtime、metadata tree SHA-256 均一致；defect-cardboard train/valid/test COCO SHA-256 均一致。`raw-invariance-d02-d03-v0.1.json` 的 5 项检查全为 true，`raw_unchanged=true`。
+
+### 32. Git状态
+
+实现提交为 `504ca5fe5cee7ee554ed0a661dd0fc7ba0c8b3e8`，提交说明 `feat(training): add D02 D03 YOLO26n baseline pipeline`，包含 10 个新增文件、2,399 行。反馈仅追加本章节并采用独立提交；暂存均使用显式路径，未使用 `git add .`。分支为 `experiment/training-d02-d03-yolo26n-baseline-v01`。
+
+### 33. 已知限制
+
+模型只识别 D02 表面凹陷和 D03 纸箱破口。总体与 D02 指标较低，小目标和背景错误明显；类别不平衡且来源为公开数据，与真实快递站拍摄存在域偏差。模型不能识别 D01、D04、D05、NORMAL、二次封装/TAMPAR，不能定位真实物流异常节点或认定责任，输出必须人工复核。
+
+### 34. 未完成事项
+
+本轮目标内事项已完成。范围外仍待后续：成员 C 审核 D04/dirt、真实站点数据采集和独立外部验证、失败样本人工复核、数据增强/不平衡对照、其他任务基线及部署；本轮没有继续执行这些事项。
+
+### 35. 风险
+
+主要风险为公开数据域偏差、D02/D03 类别及框质量噪声、D03 样本相对少、精确重复审计未覆盖视觉近重复、较低召回导致漏检、小目标定位不稳，以及将外观模型结果错误外推为物流节点或责任事实。test 规模仅 33 张，指标置信度有限。
+
+### 36. 回滚方法
+
+Git 实现可用 `git revert 504ca5fe5cee7ee554ed0a661dd0fc7ba0c8b3e8` 回滚；反馈提交形成后单独 revert。外部派生制品可按需显式删除 `E:\JianZhengData\training\detect-d02-d03-v0.1`、两个固定 run 目录、预训练权重目录中的本轮文件及 release 目录后重新构建，但不得删除或修改 `E:\JianZhengData\external\raw`。旧 stash 保持不动。
+
+### 37. 下一轮建议
+
+下一轮只选一个方向并建立对照：优先对 1,065 条自动失败记录做人工归因，针对小目标、背景漏检和 D02 低召回制定单变量增强或类别不平衡实验；也可在冻结同一数据版本上做 YOLO26s 对照。D04 必须先由成员 C 审核后才能训练；TAMPAR、二分类和连续节点应作为独立任务，不能与本基线混在同一轮。不要把当前 test 当作反复调参集。
