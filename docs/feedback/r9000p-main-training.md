@@ -1497,3 +1497,232 @@ Git 实现可 `git revert fc355df458921918029bf135c0c062d3073aa7a5`；反馈提�
 ### 45. 下一轮建议
 
 下一轮先由用户决定是否接受 `PROMOTE_FOR_TEST`。若批准，只对当前 SHA-256 固定的 candidate best.pt 在封存 test 上执行一次正式评估并与 640 的既有 test 结果比较，不再训练、不调 confidence、不改数据。若不批准，则保持 640 release，并单独设计 smallest-quartile 数据/标注审查，不在同一轮叠加 YOLO26s 或增强变量。
+
+## 比赛MVP v0.1：端到端异常节点定位系统
+
+### 1. 前置验收
+
+`origin/main` 起点为 `ab9addeab7e6d138c288b204637fcd30d1f4f9e5`。上一轮
+`fc355df458921918029bf135c0c062d3073aa7a5` 与
+`51e62e16c3b16a494fdc2ea2ab0ceaff374f6965` 均为 `origin/main` 祖先；main 通过
+fast-forward 与远端一致后创建 `feat/training-competition-mvp-v01`。工作树起始干净，
+无 merge/rebase/cherry-pick，E 盘 `Healthy / OK`，旧 stash 仅列出、未应用或删除。
+冻结 lock、candidate 和正式 release 哈希门禁均通过。
+
+### 2. 960 candidate test
+
+只对 SHA-256 为 `2dd857412b63df66d1273b326dc51afaed895da1d360c97e184762c882181a97`
+的 candidate 在冻结 33 张 test 上运行一次 `imgsz=960` 正式评估；没有训练、调阈值、
+丢图或重跑。结果 P=`0.3586125579`、R=`0.2237734797`、mAP50=`0.1910518297`、
+mAP50-95=`0.0755004514`。封存文件为
+`E:\JianZhengData\runtime\mvp-v0.1\logs\candidate-test-v0.1.json`，脚本检测到既有
+封存或输出目录会拒绝再次执行。
+
+### 3. active detector选择
+
+唯一判定指标为冻结 test mAP50-95。960 的 `0.0755004514` 高于 640 baseline 的
+`0.0714805047`，因此活动模型确定为 `d02-d03-yolo26n-imgsz960-v0.1`，imgsz=960，
+只支持 D02/D03。注册表写入
+`E:\JianZhengData\models\active\detector-v0.1.json`；历史 release 未覆盖。
+
+### 4. ONNX导出
+
+活动 PT 成功导出 batch=1、dynamic=false、FP32、opset 19 的
+`E:\JianZhengData\models\runtime\detector-v0.1\detector.onnx`，SHA-256 为
+`765394eb1e098932549d7dd59c0599b2899d3d12f9494e1f7fe2c4d95b9caf9d`。ONNX
+checker、ONNX Runtime CPU 零输入推理均通过；metadata 记录源哈希、尺寸、类别和
+Ultralytics/ONNX/ORT 版本。
+
+### 5. ONNX parity
+
+同一冻结 64 张 val 上 PT 为 P/R/mAP50/mAP50-95=`0.358709/0.261359/0.221814/
+0.094648`，ONNX 为 `0.384068/0.232858/0.210638/0.092439`；ONNX-PT 的 mAP50 与
+mAP50-95 差分别为 `-0.0111765`、`-0.00220868`。mAP50 绝对差略超 0.01 工程阈值，
+因此 ONNX 标为 `experimental`，不阻塞 MVP，运行时回退 PyTorch。报告位于 runtime
+model 目录的 `onnx-parity-report-v0.1.json`。
+
+### 6. Runtime detector
+
+`ai/runtime/model_registry.py` 校验活动 PT 路径、SHA、类别边界和 ONNX fallback；
+`ai/runtime/detector.py` 提供惰性加载统一接口。业务服务不直接散落 `YOLO(...)` 调用。
+响应包含图像尺寸、model version/SHA、runtime、耗时和规范 detection 列表。
+
+### 7. 图像配准
+
+`ImageRegistrar` 实现 ORB、BFMatcher KNN ratio、RANSAC Homography 和
+warpPerspective，输出关键点、匹配、内点、重叠率、矩阵、状态与 warnings。合成
+identity、translation、rotation、perspective 均通过；无特征图片返回 `FAILED` 和
+resize-only fallback，不伪造成功。
+
+### 8. 变化检测
+
+`ChangeDetector` 使用灰度、轻量平滑、absdiff、阈值、形态学开闭和轮廓区域。
+合成不变图变化比接近 0；加入小/大凹陷样式、破口样式或胶带样式区域能够产生变化
+区域。未知区域只写 `UNKNOWN_VISUAL_CHANGE`；只有与 D02/D03 detection 重叠时才可
+关联已支持类别。参数集中配置并明确尚未用大规模真实物流数据校准。
+
+### 9. TAMPAR demo
+
+按 pair_id 排序确定性抽取 20 组 probable pair，生成
+`tampar-demo-observation-report-v0.1.json`。只保留配准状态、变化分数、面积比、区域数
+和 warnings 的观察记录，醒目标记 `TAMPAR_PAIR_NOT_HUMAN_CONFIRMED`、`DEMO_ONLY`；
+不形成任何模型性能评价。
+
+### 10. appearance fingerprint
+
+`appearance_fingerprint_v0.1` 字段为 image SHA-256、width、height、ORB keypoint
+count、规范化 descriptor digest 和 D02/D03 known damage summary。文档、API证据和
+报告均说明 descriptor digest 只是工程级版本标识，不是稳定跨拍摄视觉身份 hash。
+
+### 11. sequence locator
+
+`ai/runtime/sequence_locator.py` 接受 N1...Nn 节点和相邻 pair 结果，MVP 强制至少
+N1/N2/N3。节点状态覆盖 NORMAL、KNOWN_DAMAGE、UNKNOWN_CHANGE、
+KNOWN_DAMAGE_AND_CHANGE、INSUFFICIENT_EVIDENCE，输出 first abnormal node/interval、
+结论码、解释和警告。
+
+### 12. 首次异常区间规则
+
+规则覆盖 `FIRST_OBSERVED_ABNORMAL_AT_N1`、`N1_TO_N2`、`N2_TO_N3`、
+`NO_ABNORMALITY_OBSERVED`、`UNKNOWN_VISUAL_CHANGE_INTERVAL` 和
+`MANUAL_REVIEW_REQUIRED`。注册失败优先进入人工复核；绝不自动输出责任方、赔偿、
+违规或人为拆封结论。
+
+### 13. evidence level
+
+E1=已知损伤与变化共同支持，E2=仅已知损伤支持，E3=仅未知变化支持，E0=无异常或
+证据不足/配准失败。它只叫“技术证据等级”，不叫法律证据等级或责任认定等级。
+
+### 14. HTML evidence report
+
+`ai/runtime/evidence_report.py` 实际生成 UTF-8 JSON 与 HTML，包含 case、节点原图引用、
+哈希、模型、detections、pair 变化、首次异常区间、E 级别、限制和固定免责声明。
+Demo A 报告图片相对引用已逐一验证存在，可本地打开，也可通过 API 获取。
+
+### 15. SQLite
+
+数据库为 `E:\JianZhengData\runtime\mvp-v0.1\jianzheng.db`，使用标准库 sqlite3 与
+外键/WAL；六表为 cases、case_nodes、detections、pair_changes、analysis_results、
+reports。真实 E2E 后案例、3 节点、2 pair、analysis 和 report 行均存在；表结构没有
+姓名、手机号、地址或真实运单号。
+
+### 16. FastAPI
+
+后端位于 `app/backend`，服务层串接 Detector、fingerprint、registration、change、
+sequence、report 与数据库。异常统一返回 `{"error":{"code","message","details"}}`，
+浏览器不接收 traceback；服务日志保留内部异常。
+
+### 17. API endpoints
+
+已实现 `GET /api/health`、`GET /api/model/info`、`POST /api/detect`、
+`POST /api/change`、`POST /api/cases`、`POST /api/cases/{case_id}/nodes`、
+`POST /api/cases/{case_id}/analyze`、`GET /api/cases/{case_id}`、
+`GET /api/cases/{case_id}/report`、`GET /api/cases`。上传校验大小、后缀、MIME 和
+OpenCV 解码，服务端生成文件名防止 traversal、盘符、UNC、绝对路径和覆盖。
+
+### 18. Python新增依赖
+
+只向 `jianzhen-training` 安装缺失的 FastAPI `0.141.1`、Uvicorn `0.52.1`、
+python-multipart `0.0.32`；既有 httpx `0.28.1` 复用并记录。核心训练包未升级，
+`python -m pip check` 通过。精确版本写入 `configs/runtime/requirements-mvp-v0.1.txt`。
+
+### 19. Vue/Vite
+
+建立本地 `frontend`，锁定 Vue `3.5.41`、Vite `7.3.6`、plugin-vue `6.0.8`，共安装
+35 个本地 package，0 vulnerability。未全局安装 npm 包，`package-lock.json` 已生成；
+`node_modules` 和 `dist` 由 `.gitignore` 排除。
+
+### 20. 前端页面
+
+单页三栏展示匿名案例、N1/N2/N3 上传、检测框、节点状态、检测数量/最高置信度、两组
+变化指标、首次异常区间、技术证据等级和 HTML 报告链接。D01/D04/D05 明确待扩展，
+底部固定免责声明；API基址只由 `frontend/src/api.js` 的 `VITE_API_BASE` 管理。
+
+### 21. Demo cases
+
+Demo A 是 `SYNTHETIC_DEMO`：N1正常、N2加入控制变化、N3保持变化，实际端到端结果
+`N1_TO_N2 / E3`。Demo B 使用 TAMPAR probable pair 构造 N1/reference、N2/tampered、
+N3/tampered，实际结果同为 `N1_TO_N2 / E3`，并标记 `PUBLIC_DATA_DEMO`、
+`SIMULATED_NODE_SEQUENCE`、`NOT_REAL_LOGISTICS_TRACE`、未经人工确认和仅演示。
+
+### 22. 一键启动
+
+`scripts/demo/start-competition-mvp.ps1` 检查活动模型、Python依赖和前端 build；缺少
+dist 时只在 frontend 本地执行 npm install/build，然后以前台 Uvicorn 启动并输出
+`http://127.0.0.1:8000`。不修改 PowerShell 全局执行策略，现场只需一个终端和地址。
+
+### 23. 端到端测试
+
+实际隐藏启动 Uvicorn 后通过 HTTP 完成 health/model、创建 case、上传 N1/N2/N3、
+analyze、获取 case/report 和前端首页，再由 SQLite 直接核验六表与行。Demo A 两组配准
+均 SUCCESS，第一组 change ratio=`0.0232914`，第二组=`0`，首次区间正确。12 项 E2E
+检查全部 true，报告为 `mvp-e2e-report-v0.1.json`，验证进程随后已停止清理。
+
+### 24. 自动测试
+
+开始时原有 137 项全通过。本轮新增 61 项有意义的 runtime/backend 测试：Detector与
+registry 10、fingerprint/sequence 16、registration/change 14、SQLite/API 21，覆盖
+题目列出的正常、异常、失败、安全和持久化分支。最终全量为 198 项并保持原 137 项
+兼容。
+
+### 25. 前端build
+
+使用固定 `C:\Program Files\nodejs\npm.cmd` 执行 install/build，Vite 生产构建 exit 0，
+生成 `frontend/dist/index.html`、CSS 和 JS；FastAPI 首页请求 200 并实际托管构建内容。
+
+### 26. API真实运行
+
+真实 Uvicorn `/api/health` 返回 status=ok、database/model ready=true、runtime=pytorch；
+`/api/model/info` 返回 960 active model、D02/D03 和 D01/D04/D05 未支持状态。Demo A
+HTTP create/upload/analyze/report/get-case 全部 200，不是仅用 TestClient 模拟。
+
+### 27. ONNX/PT runtime状态
+
+ONNX 可以加载和推理，但 parity mAP50 差略超本轮预设工程阈值，因此注册表为
+`runtime_preferred=pytorch`、`onnx_status=experimental`。Detector 自动使用活动 PT；
+若未来经确认更新注册表为 validated ONNX，可通过相同抽象切换。
+
+### 28. 系统性能
+
+Demo A 真实 API analyze 为 `2.938s`，客户端完整流程 `3.264s`；分析内部 total
+`2919.97ms`，其中 detector `2649.87ms`（首次加载含在内）、registration `70.60ms`、
+change detection `4.82ms`。ONNX val 单图 inference `34.45ms`（CPU），PT val 单图
+`6.67ms`（GPU）；这些是本机单次工程观测，不宣称通用基准。
+
+### 29. Git状态
+
+分支为 `feat/training-competition-mvp-v01`。模型、ONNX、图片、数据库、cases、reports、
+logs、node_modules、dist 未进入 Git；代码、配置、锁文件、测试和文档按 runtime、app、
+test/docs 的逻辑提交显式 stage，不使用 `git add .`。推送后通过 compare 入口建 PR。
+
+### 30. 已知限制
+
+活动模型 test mAP50-95 仅 `0.075500`，真实场景可能漏检或假阳性；主动检测只有 D02/
+D03；变化阈值尚未做真实物流序列校准；强视角、光照或背景变化可能造成 LOW_CONFIDENCE/
+FAILED 或大量未知变化；TAMPAR probable 配对不是人工确认真值。
+
+### 31. 未完成能力
+
+未训练 D01/D04/D05，未做分割、YOLO26s、LLM、快递100真实 API、登录权限、云部署、
+Docker、消息队列、PostgreSQL/Redis、移动端、实时摄像头和法律责任判断。Demo C 为可选
+项，本轮未实现，避免为展示挑样本继续占用 test。
+
+### 32. 安全边界
+
+只使用合成、公开和脱敏匿名案例；数据库无个人字段；上传防 traversal 并生成随机名；
+统一错误不泄漏 traceback。凭据/Token/Cookie/私钥、个人信息、运单号和大文件扫描不应
+命中新增 Git 内容。没有访问 F 盘，没有修改 CUDA、驱动、系统 PATH 或执行策略。
+
+### 33. 回滚
+
+Git 代码按本轮逻辑提交逐个 `git revert <commit>`；外部 MVP 只允许在明确确认后删除
+`E:\JianZhengData\runtime\mvp-v0.1`、`models/active/detector-v0.1.json` 和
+`models/runtime/detector-v0.1`。不得删除或修改 `external/raw`、冻结 dataset、candidate
+历史目录或正式 baseline release。运行中的服务按 Ctrl+C 停止，本轮 E2E 进程已清理。
+
+### 34. 下一轮建议
+
+最优先采集并人工确认少量真实同包裹连续 N1/N2/N3 序列，用它们校准配准/变化阈值和
+灯光视角拍摄规范，同时做 D02/D03 错误案例人工复核；保持当前 test 封存，不再用 test
+调阈值。第二优先级才是审核 D04 污损数据和设计 D05 胶带变化标注，不立即训练
+YOLO26s 或堆叠新模型。
