@@ -33,7 +33,30 @@ from scripts.training.prepare_d02_d03_dataset import (  # noqa: E402
 TRAINER_VERSION = "0.1.0"
 OFFICIAL_ASSET_REPOSITORY = "ultralytics/assets"
 OFFICIAL_ASSET_RELEASE = "v8.4.0"
-FORBIDDEN_TUNING_KEYS = {"lr0", "momentum", "weight_decay", "box", "cls", "dfl"}
+FORBIDDEN_TUNING_KEYS = {
+    "lr0",
+    "momentum",
+    "weight_decay",
+    "box",
+    "cls",
+    "dfl",
+    "multi_scale",
+    "mosaic",
+    "close_mosaic",
+}
+
+SUPPORTED_EXPERIMENTS = {
+    "d02-d03-yolo26n-baseline-v0.1": {
+        "imgsz": 640,
+        "name": "detect-d02-d03-yolo26n-v0.1",
+        "smoke_name": "smoke-d02-d03-yolo26n-v0.1",
+    },
+    "d02-d03-yolo26n-imgsz960-v0.1": {
+        "imgsz": 960,
+        "name": "detect-d02-d03-yolo26n-imgsz960-v0.1",
+        "smoke_name": "smoke-d02-d03-yolo26n-imgsz960-v0.1",
+    },
+}
 
 
 class TrainingPipelineError(RuntimeError):
@@ -66,7 +89,7 @@ def _is_within(path: Path, root: Path) -> bool:
 
 
 def validate_experiment_config(config: dict[str, Any]) -> dict[str, Any]:
-    """Validate the fixed first-baseline experiment contract."""
+    """Validate the fixed baseline or its single-variable 960 experiment."""
     required = {
         "experiment_id",
         "dataset_version",
@@ -102,11 +125,14 @@ def validate_experiment_config(config: dict[str, Any]) -> dict[str, Any]:
         raise TrainingPipelineError(
             f"首版配置不得手动覆盖官方recipe：{', '.join(forbidden)}"
         )
+    experiment_id = config.get("experiment_id")
+    experiment_contract = SUPPORTED_EXPERIMENTS.get(str(experiment_id))
+    if experiment_contract is None:
+        raise TrainingPipelineError(f"不支持的实验ID：{experiment_id}")
     expected = {
-        "experiment_id": "d02-d03-yolo26n-baseline-v0.1",
         "dataset_version": "detect-d02-d03-v0.1",
         "task": "detect",
-        "imgsz": 640,
+        "imgsz": experiment_contract["imgsz"],
         "epochs": 100,
         "patience": 25,
         "batch": -1,
@@ -124,9 +150,13 @@ def validate_experiment_config(config: dict[str, Any]) -> dict[str, Any]:
     mismatches = [key for key, value in expected.items() if config.get(key) != value]
     if mismatches:
         raise TrainingPipelineError(f"实验配置偏离首版固定值：{', '.join(mismatches)}")
+    if config.get("name") != experiment_contract["name"]:
+        raise TrainingPipelineError("正式run名称与实验合同不一致。")
     smoke = config["smoke"]
     if not isinstance(smoke, dict) or smoke.get("epochs") != 3:
         raise TrainingPipelineError("Smoke test必须固定为3 epoch。")
+    if smoke.get("name") != experiment_contract["smoke_name"]:
+        raise TrainingPipelineError("Smoke run名称与实验合同不一致。")
     fraction = smoke.get("fraction")
     if not isinstance(fraction, (int, float)) or not 0 < float(fraction) <= 1:
         raise TrainingPipelineError("Smoke fraction必须位于(0, 1]。")
@@ -265,7 +295,14 @@ def ultralytics_dataset_preflight(config: dict[str, Any]) -> dict[str, Any]:
         "ultralytics_split_counts": split_counts,
         "dataset_yaml": str(dataset_yaml),
     }
-    _write_json(dataset_yaml.parent / "ultralytics-preflight.json", report)
+    if config["experiment_id"] == "d02-d03-yolo26n-baseline-v0.1":
+        report_path = dataset_yaml.parent / "ultralytics-preflight.json"
+    else:
+        report_path = (
+            Path(str(config["project"])) / f"{config['name']}-dataset-preflight.json"
+        )
+    _write_json(report_path, report)
+    report["report_path"] = str(report_path)
     return report
 
 
@@ -417,6 +454,10 @@ def run_training(config: dict[str, Any], mode: str) -> dict[str, Any]:
         "requested_batch": config["batch"],
         "actual_batch": _actual_batch(trainer),
         "peak_gpu_memory_bytes": torch.cuda.max_memory_allocated(0),
+        "peak_gpu_memory_scope": (
+            "torch.cuda.max_memory_allocated including AutoBatch probes; under "
+            "Windows WDDM this may include shared-memory-backed allocation"
+        ),
         "average_epoch_seconds": elapsed / actual_epochs,
         "dataset_lock_sha256": sha256_file(Path(str(config["dataset_lock"]))),
         "pretrained_weight_sha256": sha256_file(Path(str(config["model"]))),
