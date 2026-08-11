@@ -3,26 +3,54 @@ $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $python = 'D:\JianzhenApps\Miniconda3\envs\jianzhen-training\python.exe'
 $npm = 'C:\Program Files\nodejs\npm.cmd'
-$registry = 'E:\JianZhengData\models\active\detector-v0.1.json'
+$runtime = 'E:\JianZhengData\runtime\mvp-v0.2'
+$logDir = Join-Path $runtime 'logs'
+$pidFile = Join-Path $logDir 'competition-mvp-v0.2.pid'
+$stdout = Join-Path $logDir 'uvicorn.stdout.log'
+$stderr = Join-Path $logDir 'uvicorn.stderr.log'
 
-if (-not (Test-Path -LiteralPath $python)) { throw "Python不存在：$python" }
-if (-not (Test-Path -LiteralPath $registry)) { throw "活动模型注册表不存在：$registry" }
-& $python -c "import fastapi,uvicorn,multipart,httpx,cv2,torch,ultralytics"
-if ($LASTEXITCODE -ne 0) { throw 'MVP Python依赖检查失败。' }
+& (Join-Path $PSScriptRoot 'self-check-competition-mvp.ps1') -Port $Port
+if ($LASTEXITCODE -ne 0) { throw 'Competition MVP self-check failed.' }
 
-$dist = Join-Path $repo 'frontend\dist\index.html'
-if (-not (Test-Path -LiteralPath $dist)) {
-    Push-Location (Join-Path $repo 'frontend')
+Push-Location (Join-Path $repo 'frontend')
+try {
+    & $npm run build
+    if ($LASTEXITCODE -ne 0) { throw 'frontend build failed.' }
+} finally { Pop-Location }
+
+$listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+if ($listener) {
     try {
-        & $npm install
-        if ($LASTEXITCODE -ne 0) { throw 'npm install失败。' }
-        & $npm run build
-        if ($LASTEXITCODE -ne 0) { throw 'frontend build失败。' }
-    } finally { Pop-Location }
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 3
+        if ($health.pipeline_version -eq 'competition-mvp-v0.2') {
+            Write-Host "件证 Competition MVP v0.2 已在运行：http://127.0.0.1:$Port" -ForegroundColor Green
+            exit 0
+        }
+    } catch { }
+    throw "Port $Port is occupied by another process."
 }
 
-Set-Location $repo
-Write-Host "件证 Competition MVP v0.1 已就绪" -ForegroundColor Green
+New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+$arguments = @('-m','uvicorn','app.backend.main:app','--host','127.0.0.1','--port',"$Port")
+$process = Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $repo `
+    -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+Set-Content -LiteralPath $pidFile -Value $process.Id -Encoding ascii
+
+$ready = $false
+for ($attempt = 0; $attempt -lt 90; $attempt++) {
+    Start-Sleep -Seconds 1
+    if ($process.HasExited) { break }
+    try {
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 2
+        if ($health.status -eq 'ok') { $ready = $true; break }
+    } catch { }
+}
+if (-not $ready) {
+    if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+    throw "Uvicorn failed to become ready. Inspect $stderr"
+}
+$warmup = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$Port/api/model/warmup" -TimeoutSec 60
+Write-Host '件证 Competition MVP v0.2 已就绪' -ForegroundColor Green
 Write-Host "访问地址：http://127.0.0.1:$Port"
-Write-Host '按 Ctrl+C 停止服务。'
-& $python -m uvicorn app.backend.main:app --host 127.0.0.1 --port $Port
+Write-Host "PID：$($process.Id)；停止：scripts\demo\stop-competition-mvp.ps1"
+Write-Host "Warmup：loaded=$($warmup.loaded), runtime=$($warmup.runtime), gpu=$($warmup.gpu)"
