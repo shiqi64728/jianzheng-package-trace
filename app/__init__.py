@@ -1,0 +1,1 @@
+"""JianZheng competition application package."""
