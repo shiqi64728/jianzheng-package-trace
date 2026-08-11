@@ -2,108 +2,163 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from './api'
 
-const files = reactive({ N1: null, N2: null, N3: null })
-const previews = reactive({ N1: '', N2: '', N3: '' })
-const caseName = ref('比赛现场匿名演示')
+const nodeIds = ['N1', 'N2', 'N3']
+const allSurfaces = ['front', 'left', 'right', 'top']
+const surfaceLabels = { front: '正面', left: '左侧', right: '右侧', top: '顶部' }
+const files = reactive(Object.fromEntries(nodeIds.map(node => [node, Object.fromEntries(allSurfaces.map(surface => [surface, null]))])))
+const previews = reactive(Object.fromEntries(nodeIds.map(node => [node, Object.fromEntries(allSurfaces.map(surface => [surface, '']))])))
+const mode = ref('simple')
+const caseName = ref('比赛现场匿名多表面演示')
 const caseId = ref('')
 const result = ref(null)
+const reviews = ref([])
 const model = ref(null)
+const warmup = ref(null)
 const busy = ref(false)
-const message = ref('请依次选择 N1、N2、N3 包裹外观图片。')
-const nodeIds = ['N1', 'N2', 'N3']
-
-onMounted(async () => {
-  try { model.value = await api.modelInfo() } catch (error) { message.value = error.message }
+const reviewing = ref(false)
+const message = ref('Simple Mode 默认上传 N1/N2/N3 正面；可切换 Multi-Surface Mode。')
+const reviewForm = reactive({
+  node_from: 'N1', node_to: 'N2', surface: 'left', review_class: 'D05',
+  review_status: 'CONFIRMED', reviewer_alias: 'DEMO-REVIEWER', review_note: '',
+  supersedes_review_id: null,
 })
 
-function selectFile(nodeId, event) {
+const displayedSurfaces = computed(() => mode.value === 'simple' ? ['front'] : allSurfaces)
+const ready = computed(() => nodeIds.every(node => displayedSurfaces.value.some(surface => files[node][surface])))
+
+onMounted(async () => {
+  try {
+    [model.value, warmup.value] = await Promise.all([api.modelInfo(), api.warmup()])
+  } catch (error) { message.value = error.message }
+})
+
+function selectFile(nodeId, surface, event) {
   const file = event.target.files?.[0]
   if (!file) return
-  files[nodeId] = file
-  if (previews[nodeId]) URL.revokeObjectURL(previews[nodeId])
-  previews[nodeId] = URL.createObjectURL(file)
+  files[nodeId][surface] = file
+  if (previews[nodeId][surface]) URL.revokeObjectURL(previews[nodeId][surface])
+  previews[nodeId][surface] = URL.createObjectURL(file)
 }
 
-const ready = computed(() => nodeIds.every((node) => files[node]))
-
-function nodeResult(nodeId) {
-  return result.value?.nodes?.find((node) => node.node_id === nodeId)
+function captureResult(nodeId, surface) {
+  return result.value?.nodes?.find(item => item.node_id === nodeId && item.surface === surface)
 }
 
-function nodeState(nodeId) {
-  return result.value?.analysis?.node_states?.find((node) => node.node_id === nodeId)?.status || '待分析'
+function incomingPair(nodeId, surface) {
+  return result.value?.pair_changes?.find(item => item.current_node_id === nodeId && item.surface === surface)
+}
+
+function surfaceState(nodeId, surface) {
+  const node = result.value?.analysis?.node_states?.find(item => item.node_id === nodeId)
+  return node?.surface_states?.find(item => item.surface === surface)?.status || (files[nodeId][surface] ? '待分析' : 'MISSING')
+}
+
+function reviewFor(nodeId, surface) {
+  return reviews.value.findLast?.(item => item.node_to === nodeId && item.surface === surface)
+    || [...reviews.value].reverse().find(item => item.node_to === nodeId && item.surface === surface)
+}
+
+function initializeReview() {
+  const interval = result.value?.analysis?.first_abnormal_interval
+  if (interval) {
+    const [from, to] = interval.split('_TO_')
+    reviewForm.node_from = from
+    reviewForm.node_to = to
+  }
+  reviewForm.surface = result.value?.analysis?.trigger_surfaces?.[0]?.surface || 'front'
 }
 
 async function runAnalysis() {
   if (!ready.value) return
   busy.value = true
   result.value = null
+  reviews.value = []
   try {
     const created = await api.createCase(caseName.value)
     caseId.value = created.case_id
-    for (const nodeId of nodeIds) await api.uploadNode(caseId.value, nodeId, files[nodeId])
+    for (const nodeId of nodeIds) {
+      for (const surface of displayedSurfaces.value) {
+        if (files[nodeId][surface]) await api.uploadNode(caseId.value, nodeId, surface, files[nodeId][surface])
+      }
+    }
     result.value = await api.analyze(caseId.value)
-    message.value = '端到端分析完成，证据已写入 SQLite。'
-  } catch (error) {
-    message.value = error.message
-  } finally { busy.value = false }
+    reviews.value = result.value.reviews || []
+    initializeReview()
+    message.value = '多表面端到端分析完成，机器证据已写入 SQLite。'
+  } catch (error) { message.value = error.message } finally { busy.value = false }
+}
+
+async function submitReview() {
+  reviewing.value = true
+  try {
+    const created = await api.createReview(caseId.value, { ...reviewForm })
+    reviews.value = (await api.reviews(caseId.value)).reviews
+    reviewForm.supersedes_review_id = created.review_id
+    message.value = '人工复核事件已追加；机器结果未被覆盖。再次提交将形成 supersede 审计链。'
+  } catch (error) { message.value = error.message } finally { reviewing.value = false }
 }
 </script>
 
 <template>
   <main>
     <header class="masthead">
-      <div><p class="eyebrow">JIANZHENG · COMPETITION MVP v0.1</p>
-      <h1>件证</h1><h2>连续外观数字指纹与异常节点定位</h2></div>
+      <div><p class="eyebrow">JIANZHENG · COMPETITION MVP v0.2</p><h1>件证</h1>
+        <h2>多表面连续外观数字指纹与异常节点定位</h2></div>
       <div class="model-chip"><span>活动模型</span><strong>{{ model?.model_version || '连接中' }}</strong>
-        <small>{{ model?.runtime || '—' }} · {{ model?.imgsz || '—' }}px</small></div>
+        <small>{{ model?.runtime || '—' }} · {{ model?.imgsz || '—' }}px · {{ warmup?.loaded ? '已预热' : '惰性加载' }}</small></div>
     </header>
 
-    <section class="workspace">
-      <aside class="panel setup">
-        <p class="section-no">01 / CASE</p><h3>创建分析案例</h3>
-        <label>匿名案例名称<input v-model="caseName" maxlength="120" /></label>
-        <div class="support"><h4>识别边界</h4>
-          <p><b>D01</b><span>待扩展</span></p><p class="active"><b>D02</b><span>模型支持 · 表面凹陷</span></p>
-          <p class="active"><b>D03</b><span>模型支持 · 纸箱破口</span></p><p><b>D04</b><span>待审核 / 待扩展</span></p>
-          <p><b>D05</b><span>待扩展</span></p></div>
-        <p class="status">{{ message }}</p>
-        <button :disabled="!ready || busy" @click="runAnalysis">{{ busy ? '正在分析…' : '开始完整分析' }}</button>
-      </aside>
+    <section class="toolbar panel">
+      <label>匿名案例名称<input v-model="caseName" maxlength="120" /></label>
+      <div class="mode-switch"><button :class="{selected: mode === 'simple'}" @click="mode='simple'">Simple Mode</button>
+        <button :class="{selected: mode === 'multi'}" @click="mode='multi'">Multi-Surface Mode</button></div>
+      <button class="primary" :disabled="!ready || busy" @click="runAnalysis">{{ busy ? '正在分析…' : '开始完整分析' }}</button>
+      <p class="status">{{ message }}</p>
+    </section>
 
-      <section class="panel captures"><p class="section-no">02 / SEQUENCE</p><h3>N1 / N2 / N3 节点图片</h3>
-        <div class="node-grid"><article v-for="nodeId in nodeIds" :key="nodeId" class="node-card">
-          <div class="node-head"><b>{{ nodeId }}</b><span>{{ nodeState(nodeId) }}</span></div>
-          <label class="image-drop">
-            <img v-if="previews[nodeId]" :src="previews[nodeId]" :alt="nodeId" />
-            <span v-else>选择 {{ nodeId }} 图片</span>
-            <input type="file" accept="image/jpeg,image/png,image/webp" @change="selectFile(nodeId, $event)" />
-            <i v-for="(box, index) in (nodeResult(nodeId)?.detections || [])" :key="index" class="box"
-              :style="{left: `${box.bbox_normalized[0]*100}%`,top:`${box.bbox_normalized[1]*100}%`,width:`${(box.bbox_normalized[2]-box.bbox_normalized[0])*100}%`,height:`${(box.bbox_normalized[3]-box.bbox_normalized[1])*100}%`}">
-              <em>{{ box.class_code }} {{ box.confidence.toFixed(2) }}</em></i>
-          </label>
-          <p>检测数量 <strong>{{ nodeResult(nodeId)?.detections?.length || 0 }}</strong></p>
-          <p>最高置信度 <strong>{{ Math.max(0, ...(nodeResult(nodeId)?.detections || []).map(x=>x.confidence)).toFixed(3) }}</strong></p>
-        </article></div>
-        <div v-if="result" class="pairs"><article v-for="pair in result.pair_changes" :key="pair.current_node_id">
-          <h4>{{ pair.reference_node_id }} → {{ pair.current_node_id }}</h4>
-          <p><span>Registration</span><b>{{ pair.registration_status }}</b></p>
-          <p><span>Change score</span><b>{{ pair.change_score.toFixed(3) }}</b></p>
-          <p><span>Change area</span><b>{{ (pair.changed_pixel_ratio*100).toFixed(2) }}%</b></p>
-          <small>{{ pair.changed_region_count }} 个变化区域；未命中D02/D03者统一为 UNKNOWN_VISUAL_CHANGE</small>
-        </article></div>
+    <section class="panel"><div class="section-head"><div><p class="section-no">01 / CAPTURE MATRIX</p>
+      <h3>Node × Surface Matrix</h3></div><small>Multi-Surface Mode 允许缺失单元格；只比较相邻节点的同一表面。</small></div>
+      <div class="matrix-wrap"><table class="matrix"><thead><tr><th>Node</th><th v-for="surface in displayedSurfaces" :key="surface">{{ surfaceLabels[surface] }}<small>{{ surface }}</small></th></tr></thead>
+        <tbody><tr v-for="nodeId in nodeIds" :key="nodeId"><th>{{ nodeId }}</th>
+          <td v-for="surface in displayedSurfaces" :key="`${nodeId}-${surface}`">
+            <label class="image-drop"><img v-if="previews[nodeId][surface]" :src="previews[nodeId][surface]" :alt="`${nodeId}.${surface}`" />
+              <span v-else>上传<br>{{ nodeId }}.{{ surface }}</span><input type="file" accept="image/jpeg,image/png,image/webp" @change="selectFile(nodeId, surface, $event)" />
+              <i v-for="(box, index) in (captureResult(nodeId, surface)?.detections || [])" :key="index" class="box"
+                :style="{left:`${box.bbox_normalized[0]*100}%`,top:`${box.bbox_normalized[1]*100}%`,width:`${(box.bbox_normalized[2]-box.bbox_normalized[0])*100}%`,height:`${(box.bbox_normalized[3]-box.bbox_normalized[1])*100}%`}"><em>{{ box.class_code }} {{ box.confidence.toFixed(2) }}</em></i>
+            </label>
+            <div class="cell-meta"><b :class="surfaceState(nodeId,surface).toLowerCase()">{{ surfaceState(nodeId,surface) }}</b>
+              <span>已知损伤 {{ captureResult(nodeId,surface)?.detections?.length || 0 }}</span>
+              <span v-if="incomingPair(nodeId,surface)">变化 {{ (incomingPair(nodeId,surface).changed_pixel_ratio*100).toFixed(2) }}%</span>
+              <span v-if="reviewFor(nodeId,surface)" class="reviewed">人工 {{ reviewFor(nodeId,surface).review_class }}/{{ reviewFor(nodeId,surface).review_status }}</span></div>
+          </td></tr></tbody></table></div>
+    </section>
+
+    <section v-if="result" class="result-grid">
+      <section class="panel"><p class="section-no">02 / MACHINE EVIDENCE</p><h3>机器分析</h3>
+        <div class="verdict"><span>首次异常区间</span><strong>{{ result.analysis.first_abnormal_interval || result.analysis.conclusion_code }}</strong>
+          <p>{{ result.analysis.explanation }}</p><div class="grade">技术证据等级 <b>{{ result.analysis.evidence_level }}</b></div>
+          <h4>触发表面</h4><ul><li v-for="item in result.analysis.trigger_surfaces" :key="item.surface">{{ item.surface }} · {{ item.reason }} · {{ item.change_score.toFixed(3) }}</li><li v-if="!result.analysis.trigger_surfaces.length">无</li></ul>
+          <a :href="api.reportUrl(caseId)" target="_blank">打开 HTML v0.2 证据报告 →</a></div>
       </section>
 
-      <aside class="panel conclusion"><p class="section-no">03 / EVIDENCE</p><h3>分析结果</h3>
-        <div v-if="result" class="verdict"><span>首次异常区间</span>
-          <strong>{{ result.analysis.first_abnormal_interval || result.analysis.conclusion_code }}</strong>
-          <p>{{ result.analysis.explanation }}</p><div class="grade">技术证据等级 <b>{{ result.analysis.evidence_level }}</b></div>
-          <dl><dt>已知损伤</dt><dd>{{ result.nodes.flatMap(n=>n.detections).map(x=>`${x.class_code} ${x.class_name}`).join('、') || '未检测到D02/D03' }}</dd>
-          <dt>视觉变化</dt><dd>{{ result.pair_changes.some(x=>x.is_significant) ? '检测到明显外观变化' : '未达到变化阈值' }}</dd></dl>
-          <a :href="api.reportUrl(caseId)" target="_blank">打开 HTML 证据报告 ↗</a></div>
-        <div v-else class="empty-result"><div class="pulse"></div><p>完成三节点上传后，系统将在此展示首次异常区间与技术证据等级。</p></div>
-      </aside>
+      <section class="panel review-panel"><p class="section-no">03 / HUMAN REVIEW</p><h3>人工复核（append-only）</h3>
+        <p class="hint">D01/D04/D05 由变化发现后人工分类，不表示模型自动识别。</p>
+        <div class="form-grid"><label>起点<input v-model="reviewForm.node_from" /></label><label>终点<input v-model="reviewForm.node_to" /></label>
+          <label>表面<select v-model="reviewForm.surface"><option v-for="surface in allSurfaces" :key="surface">{{ surface }}</option></select></label>
+          <label>复核类别<select v-model="reviewForm.review_class"><option>D01</option><option>D02</option><option>D03</option><option>D04</option><option>D05</option><option>NORMAL_VARIATION</option><option>UNSURE</option></select></label>
+          <label>状态<select v-model="reviewForm.review_status"><option>CONFIRMED</option><option>REJECTED</option><option>UNSURE</option></select></label>
+          <label>匿名复核人<select v-model="reviewForm.reviewer_alias"><option>MEMBER-A</option><option>MEMBER-B</option><option>MEMBER-C</option><option>DEMO-REVIEWER</option></select></label></div>
+        <label>备注<textarea v-model="reviewForm.review_note" maxlength="500" placeholder="不得填写真实姓名、手机号、地址或运单号" /></label>
+        <button class="primary" :disabled="reviewing" @click="submitReview">{{ reviewing ? '提交中…' : '追加复核事件' }}</button>
+        <ol class="review-list"><li v-for="item in reviews" :key="item.review_id"><b>{{ item.review_class }} / {{ item.review_status }}</b>
+          <span>机器：{{ item.machine_result }} · {{ item.node_from }}→{{ item.node_to }}.{{ item.surface }}</span><code>{{ item.review_payload_sha256.slice(0,16) }}…</code></li></ol>
+      </section>
     </section>
-    <footer>系统输出为计算机视觉辅助分析结果，用于异常定位与责任辅助判断，不直接构成法律责任结论。</footer>
+
+    <section class="panel capabilities"><p class="section-no">04 / CAPABILITY BOUNDARY</p><h3>当前五类业务闭环</h3>
+      <div><p><b>D02 / D03</b><span>活动 AI 检测器自动识别 + 变化证据</span></p>
+        <p><b>D01 / D04 / D05</b><span>开放集视觉变化发现 → UNKNOWN_VISUAL_CHANGE → 人工复核分类</span></p></div>
+      <small>当前不是 D01/D04/D05 的 AI 自动分类支持。</small></section>
+    <footer>AI 已知异常检测 + 开放集变化检测 + 人工复核 + 多节点多表面证据融合；不直接构成法律责任结论。</footer>
   </main>
 </template>

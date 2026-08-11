@@ -1,4 +1,4 @@
-"""Observe at most 20 deterministic probable TAMPAR pairs; never report accuracy."""
+"""Observe 20 deterministic probable TAMPAR pairs under v0.1 and v0.2 configs."""
 
 from __future__ import annotations
 
@@ -17,10 +17,11 @@ from ai.runtime.registration import ImageRegistrar
 
 EXTERNAL_ROOT = Path("E:/JianZhengData/external")
 MANIFEST = EXTERNAL_ROOT / "converted/manifests/tampar-pairs-v0.1.csv"
-CONFIG = Path("configs/runtime/change-detection-v0.1.json")
-OUTPUT = Path(
-    "E:/JianZhengData/runtime/mvp-v0.1/logs/tampar-demo-observation-report-v0.1.json"
-)
+CONFIGS = {
+    "v0.1": Path("configs/runtime/change-detection-v0.1.json"),
+    "v0.2": Path("configs/runtime/change-detection-v0.2.json"),
+}
+OUTPUT = Path("E:/JianZhengData/runtime/mvp-v0.2/logs/tampar-observation-v01-v02.json")
 
 
 def probable_pairs(limit: int = 20) -> list[dict[str, str]]:
@@ -48,8 +49,13 @@ def resize_for_demo(image, maximum: int = 1400):
 
 def main() -> int:
     if OUTPUT.exists():
-        raise RuntimeError(f"演示观察报告已存在，拒绝覆盖：{OUTPUT}")
-    detector = ChangeDetector(ImageRegistrar(CONFIG))
+        raise RuntimeError(
+            f"observation report exists; refusing to overwrite: {OUTPUT}"
+        )
+    detectors = {
+        version: ChangeDetector(ImageRegistrar(config))
+        for version, config in CONFIGS.items()
+    }
     observations = []
     for row in probable_pairs():
         reference = EXTERNAL_ROOT / row["reference_image_relpath"]
@@ -58,22 +64,15 @@ def main() -> int:
         cur_image = cv2.imread(str(tampered), cv2.IMREAD_COLOR)
         if ref_image is None or cur_image is None:
             observations.append(
-                {
-                    "pair_id": row["pair_id"],
-                    "observation_status": "IMAGE_UNREADABLE",
-                }
+                {"pair_id": row["pair_id"], "observation_status": "IMAGE_UNREADABLE"}
             )
             continue
-        result = serializable_change(
-            detector.detect(resize_for_demo(ref_image), resize_for_demo(cur_image))
-        )
-        observations.append(
-            {
-                "pair_id": row["pair_id"],
-                "pairing_confidence": "probable",
-                "reference_image_relpath": row["reference_image_relpath"],
-                "tampered_image_relpath": row["tampered_image_relpath"],
-                "observation_status": "OBSERVED",
+        version_results = {}
+        for version, detector in detectors.items():
+            result = serializable_change(
+                detector.detect(resize_for_demo(ref_image), resize_for_demo(cur_image))
+            )
+            version_results[version] = {
                 "registration_status": result["registration_status"],
                 "change_score": result["change_score"],
                 "changed_pixel_ratio": result["changed_pixel_ratio"],
@@ -81,13 +80,20 @@ def main() -> int:
                 "is_significant": result["is_significant"],
                 "warnings": result["warnings"],
             }
+        observations.append(
+            {
+                "pair_id": row["pair_id"],
+                "pairing_confidence": "probable",
+                "observation_status": "OBSERVED",
+                "versions": version_results,
+            }
         )
     payload = {
-        "report_version": "tampar-demo-observation-v0.1",
+        "report_version": "tampar-observation-v01-v02",
         "generated_at": datetime.now().astimezone().isoformat(),
         "record_count": len(observations),
-        "labels": ["TAMPAR_PAIR_NOT_HUMAN_CONFIRMED", "DEMO_ONLY"],
-        "prohibited_interpretation": "本报告仅为观察记录，不形成任何模型性能评价；probable pair未经人工确认。",
+        "labels": ["TAMPAR_PAIR_NOT_HUMAN_CONFIRMED", "OBSERVATION_ONLY", "DEMO_ONLY"],
+        "interpretation": "The probable pairs are not human-confirmed; this report records engineering behavior only.",
         "observations": observations,
     }
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)

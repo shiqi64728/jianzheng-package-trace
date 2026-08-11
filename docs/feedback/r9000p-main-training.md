@@ -1726,3 +1726,265 @@ Git 代码按本轮逻辑提交逐个 `git revert <commit>`；外部 MVP 只允�
 灯光视角拍摄规范，同时做 D02/D03 错误案例人工复核；保持当前 test 封存，不再用 test
 调阈值。第二优先级才是审核 D04 污损数据和设计 D05 胶带变化标注，不立即训练
 YOLO26s 或堆叠新模型。
+
+## 比赛MVP v0.2：多表面连续外观指纹与人工复核闭环
+
+### 1. 前置验收
+
+`origin/main` 起点为 `e177ec29f0eaaa3d66267dfaf34da35a97fe8b60`，工作树起始干净，
+无 merge/rebase/cherry-pick，E 盘 `Healthy / OK`，本地 main 通过 fast-forward 与远端
+一致后创建 `feat/training-competition-mvp-v02`。没有应用、删除或清理旧 stash。
+
+### 2. v0.1资产复核
+
+`cab708d...`、`f2c0f9e...`、`5217e91...`、`9dbd76b...` 四个提交均以 exit 0
+通过 `git merge-base --is-ancestor ... origin/main`。活动模型仍为
+`d02-d03-yolo26n-imgsz960-v0.1`，SHA-256 仍为
+`2dd857412b63df66d1273b326dc51afaed895da1d360c97e184762c882181a97`，imgsz=960，
+PyTorch active、ONNX experimental。
+
+### 3. 本轮目标
+
+本轮没有训练、下载或重新调 detector，没有访问 detector test；工作集中在多表面证据
+结构、同表面跨节点比较、人工复核审计链、工程标定、Demo C/D、Vue 矩阵、预热和现场
+稳定化。
+
+### 4. 数据库迁移
+
+v0.2 首次启动用 SQLite backup API 以只读源连接复制 v0.1 数据库，再在独立 v0.2 副本
+上迁移。迁移前后 v0.1 与 v0.2 均保留原 2 个 cases、6 个节点；旧表重命名为
+`case_nodes_v01_backup` 保留，新的 `case_nodes` 使用三列主键，未执行 DROP 或删除旧案例。
+
+### 5. surface schema
+
+正式枚举为 `front / left / right / top / back / bottom / unknown`；UI 默认前四项。旧
+`PACKAGE_EXTERIOR` 或未传 surface 时规范化为 `front`。唯一键为
+`(case_id,node_id,surface)`，同节点不同表面允许并存，同节点同表面重复返回 409。
+
+### 6. multi-surface fingerprint
+
+每个 node×surface 独立保存 `image_sha256`、width、height、ORB keypoint count、
+descriptor digest 和 D02/D03 known damage summary，版本为 `surface_fingerprint_v0.2`。
+不同表面不会交叉拼接或生成虚假统一哈希。
+
+### 7. surface analyzer
+
+新增 `ai/runtime/surface_analyzer.py`，统一单表面的 Detector、fingerprint、
+registration、change、可视化与缺失 pair 生成；`services.py` 只负责案例编排和持久化。
+analyzer 对跨表面输入直接抛错。
+
+### 8. multi-surface sequence locator
+
+`locate_multisurface_first_abnormality` 按 N1...Nn 和相邻同 surface pair 融合，输出每个
+区间的表面状态、区间结论、证据等级、首次异常节点/区间、完整度与 warnings。N1 首次已知
+损伤、N1→N2、N2→N3、全正常、仅失败/缺失均有测试。
+
+### 9. trigger surface
+
+分析结果新增 `trigger_surfaces`，每项包含 surface、reason 和 change score。真实 Demo D
+只返回 `left / UNKNOWN_VISUAL_CHANGE / 1.0`，没有把 front/right/top 错误加入触发表面。
+
+### 10. evidence聚合
+
+E1=至少一个同表面 pair 由 known detector + reliable change 支持；E2=至少一个表面只由
+known detector 支持；E3=无 known detector 但至少一个可靠未知变化；E0=无异常或证据
+不足。missing/FAILED 不会单独触发异常。
+
+### 11. review schema
+
+新增 `review_events`：review id、case、node_from/to、surface、machine result、review
+class/status、匿名 reviewer、note、created_at、supersedes id 和 payload SHA-256。没有真实
+姓名字段。
+
+### 12. review API
+
+新增 `POST /api/cases/{case_id}/reviews` 与 `GET /api/cases/{case_id}/reviews`。
+POST 会从已保存的机器 interval/surface 状态派生 `machine_result`，客户端不能覆盖该字段；
+复核前未分析、非法区间或未分析表面均被拒绝。
+
+### 13. append-only review
+
+服务层只 INSERT；SQLite 同时建立 BEFORE UPDATE/DELETE trigger，任何修改或删除
+`review_events` 都以 integrity error 中止。重复意见会作为新事件追加。
+
+### 14. D01/D04/D05业务闭环
+
+D01、D04、D05 都已通过独立 API 测试：机器先输出 `UNKNOWN_VISUAL_CHANGE`，人工再选择
+相应类别并确认/拒绝/不确定。报告同时显示机器与人工字段，从未把人工 D01/D04/D05 改写
+成“模型识别”。
+
+### 15. calibration suite
+
+`build_change_calibration_suite.py` 在
+`E:\JianZhengData\runtime\calibration\change-v0.1` 生成 10 个固定场景：4 normal、4
+change、2 failure；每个场景含 reference/current PNG 与 SHA-256，manifest 标记
+`SYNTHETIC_ENGINEERING_CALIBRATION`。
+
+### 16. threshold calibration
+
+只扫描 pixel difference threshold 24/32/40、minimum region area 120/180/260、
+significant change ratio 0.004/0.006/0.01，共 27 组；不加载 Detector、不改 confidence、
+IoU 或权重。v0.1 参数在合成集为 normal false alarm 0、change missed 1；v0.2 仅将 ratio
+从 0.006 调为 0.004，结果为 0 和 0，来源字段为 `synthetic_engineering`。
+
+### 17. TAMPAR observation
+
+确定性观察 20 个 probable pair。v0.1/v0.2 配准状态均为 FAILED 9、LOW_CONFIDENCE 4、
+SUCCESS 7；变化分数中位数均 1.0、区域数中位数均 49.5、significant count 均 20。
+只报告工程观察，不将 probable pair 当人工真值或真实物流性能。
+
+### 18. Demo C
+
+固定 seed `20260811`，只按 SHA 排序读取冻结 val 中 ground truth 非空样本，首个候选
+`0372_jpg...jpg` 即有一项真实活动模型 D02 输出，confidence `0.272988`。图片复制到
+v0.2 Demo C；元数据写明 `PUBLIC_DATA_DETECTION_DEMO`、`NOT_REAL_LOGISTICS_TRACE`、
+source split=val、预测框未编辑。没有读取 test。
+
+### 19. Demo D
+
+生成 N1/N2/N3 × front/left/right/top 共 12 张程序合成图；只有 left 在 N2 注入受控区域，
+N3 保持该变化。元数据标记 `MULTISURFACE_SYNTHETIC_DEMO`，预期区间 N1_TO_N2、表面
+left。
+
+### 20. frontend surface matrix
+
+Vue 页面升级为 Node×Surface 矩阵，单元格显示上传预览、真实 detection box、机器状态、
+已知损伤数、变化比和最新人工复核状态。缺失单元格可留空，后端显式记录 missing。
+
+### 21. review panel
+
+前端提供区间、表面、七类 review class、三类状态、四个匿名 reviewer、备注与 supersede
+提交；复核列表同时展示机器结果、人工结果和 payload SHA 前缀。
+
+### 22. model warmup
+
+Detector 新增安全灰色 dummy inference；FastAPI lifespan 默认主动预热。真实启动返回
+loaded=true、runtime=pytorch、GPU=true，首次 warmup `2567.46ms`；失败时仅降级为 lazy
+fallback，不阻断服务启动。
+
+### 23. self-check
+
+`self-check-competition-mvp.ps1` 实际检查 Python 路径、依赖、GPU、active model 路径与
+SHA、runtime 配置、SQLite 目录、frontend/dist、端口和 API health；实际运行全部 PASS，
+仅在服务未启动时将 health 标为 WARN。
+
+### 24. stop script
+
+停止脚本从 v0.2 runtime 的固定 PID 文件读取 PID，再核验进程命令行同时包含 uvicorn 和
+`app.backend.main:app` 后停止；真实停止 PID 38952 后，8000 listener=false、PID 文件
+不存在。不会按端口模糊杀进程。
+
+### 25. cold/warm performance
+
+独立真实 Uvicorn 进程用环境变量仅为冷测关闭 startup warmup。Demo D cold analyze 为
+`3885.56ms`；显式 warmup 后三次为 `1022.54 / 1061.04 / 1002.14ms`，median
+`1022.54ms`、min `1002.14ms`、max `1061.04ms`，warm median 明显低于 cold。
+
+### 26. API E2E
+
+真实服务完成 health、model info、warmup、旧 Demo A/B、Demo C detect、Demo D 12 次上传、
+analyze、review POST/GET、case/report 和 frontend 静态资源。第一次验收只因测试脚本在
+HTML 外壳而不是编译 JS 中搜索 v0.2 文本而失败，失败报告保留；修正验证器后最终 10/10
+断言通过，没有改产品结论或硬编码 Demo D 输出。
+
+### 27. SQLite结果
+
+真实 Demo D 行数：case_nodes 12、pair_changes 8、surface_analysis 12、analysis_results
+1、reports 1、review_events 1、detections 0。schema version=2；实际表还包括保留的
+`case_nodes_v01_backup` 和 `database_migrations`。
+
+### 28. HTML v0.2 report
+
+报告路径按案例隔离，初始为 `report-r000.html/json`，首次 review 后为
+`report-r001.html/json`。内容含节点×表面矩阵、触发表面、机器分析、人工复核、每表面
+fingerprint、pair registration/change、最终区间和限制。
+
+### 29. old Demo回归
+
+直接读取 v0.1 runtime 原 Demo A/B 图片并通过 v0.2 真实 API 重跑，两者均保持
+`N1_TO_N2 / E3`，报告 HTTP 200。没有删除、移动或覆盖 v0.1 Demo。
+
+### 30. 自动测试
+
+本轮新增 57 项：多表面/词汇/fingerprint/locator 22，标定 7，数据库迁移/API/review 28。
+覆盖任务要求的 40+ 场景，全部通过。
+
+### 31. 原198项兼容性
+
+开发前 198/198 PASS；完成后全量 255/255 PASS，原 198 项仍通过。v0.1 endpoints、
+`PACKAGE_EXTERIOR` 单图上传、旧 report helper 和六表 introspection helper 保持兼容。
+
+### 32. frontend build
+
+`C:\Program Files\nodejs\npm.cmd run build` exit 0，Vite 7.3.6 构建 11 modules，生成
+0.51 kB HTML、4.33 kB CSS、75.65 kB JS；真实 FastAPI 首页与编译 JS 均 HTTP 200。
+
+### 33. npm audit
+
+第一次请求 registry 时 TLS 建连中断；等待后按同一命令重试成功，`found 0 vulnerabilities`。
+没有为非阻塞问题执行大版本升级。
+
+### 34. Ruff
+
+对 scripts、ai、app、tests 执行 `ruff check` 与 `ruff format --check`；最终均为 0 issue，
+61 个 Python 文件格式检查通过。
+
+### 35. py_compile
+
+对仓库全部 61 个 Python 文件执行编译检查；所有文件通过，pyc 只写入外部 v0.2
+`logs/pycompile-cache`，没有提交 pyc/cache 制品。
+
+### 36. raw不变性
+
+开始前 raw 为 7,952 个文件、13,339,506,276 字节，metadata SHA-256
+`9f273bb050e911aecd9dd9c4ff05ebaa37526eb092680d84fd2530757d170786`；本轮只读使用，
+结束比较保持一致。
+
+### 37. frozen dataset不变性
+
+排除派生 cache 后为 1,431 个文件、33,795,252 字节，content tree SHA-256
+`9a0b6615187543cffb838bcebc0296d1ef7389a9fa2e6228d55b44d375da78ff`，lock SHA-256
+仍为 `6d496281...`。Demo C 只读 val 并复制，未修改图片、标签或 lock。
+
+### 38. model历史不变性
+
+baseline release content tree SHA-256
+`eb284208fc36092128edd82afdbcb20f46310c4494faeacdb1e0f824ec4f656a`；candidate history
+为 `f5ec149fc5db647ea1d1e67b11979658b608a49a3cf9788a4a75a95c4cdccc10`，结束保持一致。
+没有训练、下载、导出或改 active registry。
+
+### 39. Git
+
+实现提交依次为 `12b36ac feat(runtime)`、`b9a64a1 feat(app)`、`7d3b765 feat(demo)`、
+`5cfbfdd test(mvp)`；本章、README 与架构文档作为独立 docs 提交。全部显式 stage，未使用
+`git add .`；模型、图片、SQLite、runtime report、logs、node_modules 与 dist 未入 Git。
+
+### 40. 当前能力
+
+MVP 已支持多节点多表面上传、同表面比较、surface/node fingerprint、D02/D03 已知异常、
+open-set 变化、trigger surface、区间融合、D01/D04/D05 人工确认、append-only 审计链、
+SQLite、版本化 HTML 报告、Vue 双模式、Demo A/B/C/D、预热、自检、启动与安全停止。
+
+### 41. 当前限制
+
+D01/D04/D05 不是 AI 自动分类；真实同包裹连续序列仍不足；合成标定不代表真实物流；
+活动 D02/D03 detector 的既有测试表现较低；强视角、背景、光照、遮挡和缺面会降低可靠度；
+无登录、真实物流 API、移动端、云部署、视频、分割或法律责任自动判定。
+
+### 42. 比赛风险
+
+最大风险仍是现场拍摄与公开/合成域差异，而不是链路缺失。第二风险是首次 GPU 模型加载；
+已用 startup warmup 缓解。第三风险是复核者把人工 D01/D04/D05 口径误说成 AI 分类；UI、
+报告和文档已统一限制口径。
+
+### 43. 回滚
+
+Git 可按相反顺序 revert 本轮五个逻辑提交。外部 v0.2 可在明确确认后单独删除
+`E:\JianZhengData\runtime\mvp-v0.2` 与合成 calibration 目录重新生成；不得删除或修改
+v0.1 runtime、raw、冻结 dataset、baseline release、candidate history 或 active registry。
+
+### 44. 下一轮建议
+
+最高优先级是按 front/left/right/top 固定拍摄规范采集少量真实同包裹 N1/N2/N3 序列，
+让 MEMBER-C 完成人工 pair/surface 真值，再只用新的 calibration split 检查变化阈值和
+配准失败分布；继续封存 detector test，不叠加训练新模型或新类别。

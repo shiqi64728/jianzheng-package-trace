@@ -65,3 +65,43 @@ def build_appearance_fingerprint(
         },
         "limitation": FINGERPRINT_LIMITATION,
     }
+
+
+def build_surface_fingerprint(
+    image: np.ndarray | str | Path,
+    detections: list[dict[str, Any]] | None = None,
+    surface: str = "front",
+) -> dict[str, Any]:
+    """Build the v0.2 fingerprint for one node/surface capture.
+
+    The content hash and descriptor digest are still technical evidence
+    identifiers; this function does not claim cross-camera biometric identity.
+    """
+    fingerprint = build_appearance_fingerprint(image, detections)
+    fingerprint["fingerprint_version"] = "surface_fingerprint_v0.2"
+    fingerprint["surface"] = surface
+    return fingerprint
+
+
+def build_node_fingerprint_summary(
+    node_id: str,
+    surface_results: list[dict[str, Any]],
+    surfaces_with_unknown_change: list[str] | None = None,
+) -> dict[str, Any]:
+    """Aggregate immutable per-surface fingerprints without merging surfaces."""
+    ordered = sorted(surface_results, key=lambda item: item["surface"])
+    return {
+        "summary_version": "node_fingerprint_summary_v0.2",
+        "node_id": node_id,
+        "available_surfaces": [item["surface"] for item in ordered],
+        "surface_hashes": {
+            item["surface"]: item["fingerprint"]["image_sha256"] for item in ordered
+        },
+        "total_known_damage_count": sum(
+            len(item.get("detections", [])) for item in ordered
+        ),
+        "surfaces_with_damage": [
+            item["surface"] for item in ordered if item.get("detections")
+        ],
+        "surfaces_with_unknown_change": sorted(set(surfaces_with_unknown_change or [])),
+    }

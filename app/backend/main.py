@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -12,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .schemas import CaseCreate
+from .schemas import CaseCreate, ReviewCreate
 from .services import MVPError, MVPService
 
 LOGGER = logging.getLogger("jianzheng.mvp")
@@ -26,11 +28,26 @@ def error_response(code: str, message: str, details: dict[str, Any], status: int
 
 
 def create_app(
-    config_path: str | Path = "configs/runtime/mvp-v0.1.json",
+    config_path: str | Path = "configs/runtime/mvp-v0.2.json",
     service: MVPService | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="件证 Competition MVP", version="0.1.0")
-    app.state.service = service or MVPService(config_path)
+    active_service = service or MVPService(config_path)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        disabled = os.environ.get("JIANZHENG_DISABLE_AUTO_WARMUP") == "1"
+        if active_service.config.get("auto_warmup", False) and not disabled:
+            result = active_service.warmup()
+            if not result.get("loaded"):
+                LOGGER.warning("Detector warmup fell back to lazy load: %s", result)
+        yield
+
+    app = FastAPI(
+        title="件证 Competition MVP",
+        version="0.2.0",
+        lifespan=lifespan,
+    )
+    app.state.service = active_service
     app.add_middleware(
         CORSMiddleware,
         allow_origins=app.state.service.config["cors_origins"],
@@ -71,6 +88,10 @@ def create_app(
     def model_info():
         return app.state.service.registry.public_info()
 
+    @app.post("/api/model/warmup")
+    def model_warmup():
+        return app.state.service.warmup()
+
     @app.post("/api/detect")
     async def detect(file: Annotated[UploadFile, File(...)]):
         content = await file.read()
@@ -100,7 +121,7 @@ def create_app(
     async def add_node(
         case_id: str,
         node_id: Annotated[str, Form(...)],
-        surface: Annotated[str, Form()] = "PACKAGE_EXTERIOR",
+        surface: Annotated[str, Form()] = "front",
         capture_time: Annotated[str | None, Form()] = None,
         file: Annotated[UploadFile, File(...)] = None,
     ):
@@ -137,6 +158,14 @@ def create_app(
         if not path.is_file():
             raise MVPError("REPORT_FILE_MISSING", "报告文件不存在。", 404)
         return FileResponse(path, media_type="text/html; charset=utf-8")
+
+    @app.post("/api/cases/{case_id}/reviews")
+    def create_review(case_id: str, payload: ReviewCreate):
+        return app.state.service.add_review(case_id, payload.model_dump())
+
+    @app.get("/api/cases/{case_id}/reviews")
+    def list_reviews(case_id: str):
+        return {"reviews": app.state.service.list_reviews(case_id)}
 
     @app.get("/api/cases")
     def list_cases():

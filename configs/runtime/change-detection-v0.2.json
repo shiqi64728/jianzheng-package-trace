@@ -1,0 +1,21 @@
+{
+  "config_version": "change-detection-v0.2",
+  "purpose": "比赛MVP合成工程校准；不代表真实物流性能。",
+  "calibration_source": "synthetic_engineering",
+  "orb_nfeatures": 1800,
+  "orb_scale_factor": 1.2,
+  "orb_nlevels": 8,
+  "match_ratio": 0.75,
+  "ransac_reprojection_threshold": 4.0,
+  "minimum_good_matches": 10,
+  "minimum_inlier_ratio": 0.2,
+  "success_inlier_ratio": 0.45,
+  "minimum_overlap_ratio": 0.45,
+  "blur_kernel": 5,
+  "pixel_difference_threshold": 32,
+  "morphology_kernel": 5,
+  "morphology_iterations": 1,
+  "minimum_region_area": 180,
+  "significant_change_ratio": 0.004,
+  "known_damage_overlap_ratio": 0.15
+}
