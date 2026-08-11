@@ -102,3 +102,30 @@ class Detector:
             "inference_ms": inference_ms,
             "detections": detections,
         }
+
+    def warmup(self) -> dict[str, Any]:
+        """Load the model and run one deterministic, content-free inference."""
+        started = time.perf_counter()
+        was_loaded = self._model is not None
+        size = int(self.registry.imgsz)
+        dummy = np.full((size, size, 3), 127, dtype=np.uint8)
+        result = self.predict(dummy)
+        gpu = False
+        gpu_name = None
+        if self.runtime == "pytorch":
+            try:
+                import torch
+
+                gpu = bool(torch.cuda.is_available())
+                gpu_name = torch.cuda.get_device_name(0) if gpu else None
+            except Exception:  # pragma: no cover - lazy fallback is intentional
+                gpu = False
+        return {
+            "loaded": True,
+            "already_loaded": was_loaded,
+            "runtime": self.runtime,
+            "warmup_ms": (time.perf_counter() - started) * 1000.0,
+            "inference_ms": result["inference_ms"],
+            "gpu": gpu,
+            "gpu_name": gpu_name,
+        }
