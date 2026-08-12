@@ -28,10 +28,13 @@ def error_response(code: str, message: str, details: dict[str, Any], status: int
 
 
 def create_app(
-    config_path: str | Path = "configs/runtime/competition-rc-v1.0.json",
+    config_path: str | Path | None = None,
     service: MVPService | None = None,
 ) -> FastAPI:
-    active_service = service or MVPService(config_path)
+    resolved_config = config_path or os.environ.get(
+        "JIANZHENG_RUNTIME_CONFIG", "configs/runtime/competition-rc-v1.0.json"
+    )
+    active_service = service or MVPService(resolved_config)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):

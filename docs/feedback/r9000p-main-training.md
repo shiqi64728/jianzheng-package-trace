@@ -2041,3 +2041,45 @@ v0.1 runtime、raw、冻结 dataset、baseline release、candidate history 或 a
 终验再次确认：正式 start 脚本已在 8030 端口完成 self-check、GPU warmup、health 和安全 stop，
 服务停止后无 listener；raw、frozen、baseline/candidate model history、runtime v0.1/v0.2 与 active
 registry 的文件数、字节数、metadata/content tree SHA 均与 preflight 精确一致。
+
+## Competition RC v1.1 — Real-World Calibration & Model Hardening
+
+本轮基线为 `origin/main=dd68382a50473cb21453b17ba6f61c7191221538`，分支为
+`experiment/competition-rc-v11-hardening`。范围严格限制为真实域校准准备、D02/D03 模型审计、
+一个 YOLO26s@640 候选和最终冻结，没有增加新产品模块。
+
+| Goal | 风险 | 目标指标 | 实际结果 | 证据 | 状态 |
+|---|---|---|---|---|---|
+| GOAL-01 | 两项 | 331/331 且历史不可变 payload 不变 | 开始 331/331，最终 372/372；raw、冻结图片/标签内容、旧模型/runtime/RC v1.0 与 active registry 的 postflight 内容校验通过；派生 `labels/train.cache` 内容相同但 mtime 被 Ultralytics 刷新，已单列披露 | preflight/final tests；invariants | PASS |
+| GOAL-02 | Domain gap | ≥3 个合规 N1/N2/N3 包裹，否则生成任务包 | 搜索 `E:\JianZhengData` 未发现；60 行 worklist 与成员 C 一页任务已生成 | real-sequence-discovery、capture-worklist | PENDING_EXTERNAL_DATA |
+| GOAL-03 | Domain gap | 真实 registration/change 校准 | 无合规真实数据，指标全部 NOT_AVAILABLE；保留 change v0.2，不强行生成 v0.3 | calibration input、采集包 | PENDING_EXTERNAL_DATA |
+| GOAL-04 | Detector accuracy | val failure、50 D02 GT、跨 split near duplicate | 1,299 failure；50 D02 GT；0 exact、3 perceptual near duplicates | detector/near-duplicate audits | PASS |
+| GOAL-05 | Detector accuracy | 唯一 YOLO26s@640 smoke/100 epochs/val | 官方权重 SHA `646f8bc3...`；smoke、100 epochs、val 全完成，无 NaN/OOM | yolo26s evidence | PASS |
+| GOAL-06 | Detector accuracy | 2/3 ≥10% 且延迟≤1.75× | 0/3 达标；延迟 PASS；KEEP_CURRENT_ACTIVE；candidate test 未执行 | detector-comparison | PASS |
+| GOAL-07 | 两项 | 5/5 Demo；median≤1500；P90≤2000 | 5/5，0 crash/corruption/missing；median 914.278ms、P90 981.976ms | stability/performance/validation | PASS |
+| GOAL-08 | 两项 | 独立冻结、manifest、工程门禁 | RC v1.1 独立目录、53-file manifest、全部工程门禁 PASS | release/evidence/docs | PASS |
+
+### 模型结论
+
+YOLO26s@640 val 为 P/R/mAP50/mAP50-95 `0.321941/0.299039/0.238414/0.102231`；
+D02 AP50-95 `0.039505`、recall `0.218767`，D03 AP50-95 `0.164956`。相对 active n960，
+overall AP +8.012%、D02 AP −1.261%、D02 recall +7.368%，没有一项达到 +10%。候选推理
+10.177ms/image，虽满足 1.75× 延迟门槛，但提升项为 0/3，故未允许 candidate test，active
+仍为 `d02-d03-yolo26n-imgsz960-v0.1`，SHA
+`2dd857412b63df66d1273b326dc51afaed895da1d360c97e184762c882181a97`。
+
+### 数据与真实性结论
+
+真实包裹、真实图片、真实 surface 均为 0；五项 real validation 场景全部
+`PENDING_EXTERNAL_DATA`，没有用公开或合成数据冒充。冻结数据的 711 张图跨 split DCT 审计
+发现 3 组 train↔val perceptual near duplicate，0 exact duplicate；作为疑似 leakage 披露，
+没有删除或修改 frozen dataset。D01/D04/D05 仍只允许表述为开放集变化加人工复核。
+
+不可变性终验中，冻结目录文件数、总字节数和包含 cache 的全树内容 SHA 与 preflight 完全一致；
+训练工具只重建了内容相同的派生 `labels/train.cache`，造成 mtime/metadata SHA 漂移。图片、标签、
+dataset lock 及其他历史资产内容没有改变，该已解释工具副作用不计为 unexpected payload change。
+
+### 最终冻结与后续
+
+本轮完成后不建议继续大规模代码开发。除非出现严重真实场景失败、比赛规则变化或核心 bug，
+工作应转向真实校准数据补充、比赛录屏、作品文本、PPT、答辩和彩排。

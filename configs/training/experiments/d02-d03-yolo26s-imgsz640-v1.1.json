@@ -1,0 +1,39 @@
+{
+  "experiment_id": "d02-d03-yolo26s-imgsz640-v1.1",
+  "hypothesis": "Increasing model capacity at imgsz 640 is more efficient than further increasing input resolution.",
+  "single_variable": {
+    "name": "model_capacity",
+    "baseline": "YOLO26n",
+    "candidate": "YOLO26s"
+  },
+  "dataset_version": "detect-d02-d03-v0.1",
+  "dataset_yaml": "E:/JianZhengData/training/detect-d02-d03-v0.1/dataset.yaml",
+  "dataset_lock": "E:/JianZhengData/training/detect-d02-d03-v0.1/dataset-lock.json",
+  "model": "E:/JianZhengData/models/pretrained/ultralytics/yolo26s.pt",
+  "model_metadata": "E:/JianZhengData/models/pretrained/ultralytics/yolo26s.metadata-v1.1.json",
+  "task": "detect",
+  "imgsz": 640,
+  "epochs": 100,
+  "patience": 25,
+  "batch": -1,
+  "device": 0,
+  "workers": 4,
+  "cache": false,
+  "seed": 42,
+  "deterministic": true,
+  "optimizer": "auto",
+  "pretrained": true,
+  "amp": true,
+  "project": "E:/JianZhengData/training/runs",
+  "name": "detect-d02-d03-yolo26s-imgsz640-v1.1",
+  "save": true,
+  "save_period": 10,
+  "evaluation_batch": 8,
+  "candidate_dir": "E:/JianZhengData/models/experiments/d02-d03-yolo26s-imgsz640-v1.1",
+  "smoke": {
+    "epochs": 3,
+    "fraction": 0.25,
+    "project": "E:/JianZhengData/training/runs",
+    "name": "smoke-d02-d03-yolo26s-imgsz640-v1.1"
+  }
+}
