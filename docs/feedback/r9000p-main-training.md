@@ -1988,3 +1988,56 @@ v0.1 runtime、raw、冻结 dataset、baseline release、candidate history 或 a
 最高优先级是按 front/left/right/top 固定拍摄规范采集少量真实同包裹 N1/N2/N3 序列，
 让 MEMBER-C 完成人工 pair/surface 真值，再只用新的 calibration split 检查变化阈值和
 配准失败分布；继续封存 detector test，不叠加训练新模型或新类别。
+
+## Competition Release Candidate v1.0
+
+本轮在 `origin/main=809a1493f0c5fb067bef46290fddedf39fe12eba` 上创建
+`feat/competition-release-candidate-v10`。第一次 `git pull --ff-only` 遇到临时 TLS
+失败；成功 fetch 后，在干净工作树上将 main 安全快进并重建功能分支，没有保留错误基线或丢失修改。
+
+| Goal | 目标指标 | 实际结果 | 证据 | 状态 |
+|---|---|---|---|---|
+| GOAL-01 | 原 255 项及全部新增测试通过 | 原 255 项保留；全量 331/331，新增 76 | `E:\JianZhengData\runtime\competition-rc-v1.0\evidence\test-summary-v1.0.json` | PASS |
+| GOAL-02 | 可解释 0-100 风险规则；≥10 测试；配准失败不 HIGH | 九项分解，18 个确定性测试；总分等于分项和；失败配准 cap=59 | `ai/runtime/risk_engine.py`、全量测试、E2E risk | PASS |
+| GOAL-03 | 工单 append-only；OPEN→IN_REVIEW→RESOLVED E2E | schema v3 两张工单表；三事件闭环和报告历史通过 | stability 3/3、workflow tests | PASS |
+| GOAL-04 | SQLite 至少 8 项真实指标 | 11 类聚合指标与四组趋势；API/UI 均通过 | Dashboard API、`metrics-v1.0.md` | PASS |
+| GOAL-05 | JSON/CSV/错误字段 E2E | TestClient 与真实 Uvicorn 均验证 JSON、CSV；PII 字段拒绝 | `competition-e2e-v1.0.json`、76 新测试 | PASS |
+| GOAL-06 | MP4 解码、采样、活动 detector、≥1 关键帧 | 30 帧合成视频；采样 6 帧，异常 4 帧；HTTP keyframe 200 | `competition-demo-assets-v1.0.json`、E2E | PASS |
+| GOAL-07 | Demo D 完整 Report v1.0 | JSON/HTML 含指定字段、固定声明、有效本地图像、风险/时间线/工单 | stability 的三个 report path、report tests | PASS |
+| GOAL-08 | 离线构建；完整演示 3/3 | 三次独立 Uvicorn start/stop，3/3 PASS，0 crash/corruption/missing asset | `competition-release-stability-v1.0.json` | PASS |
+| GOAL-09 | cold + warm×5；median≤1500ms 且退化≤50% | cold 4097.121ms；warm median 940.674ms；分段计时完整 | `performance-v1.0.json` | PASS |
+| GOAL-10 | SYSTEM BEHAVIOR VALIDATION ≥16 | 17/17 PASS；明确不是 model accuracy | `competition-validation-summary-v1.0.json` | PASS |
+| GOAL-11 | 能力分类与 D01-D05 真实边界 | 指定六类、视频/责任边界全部落实 | `docs/competition/capability-matrix-v1.0.md` | PASS |
+| GOAL-12 | 7 份 Release 文档和完整 runbook | 指定 7 份全部新增；runbook 含检查、A-D、主线、fallback、停止 | `docs/competition/` | PASS |
+| GOAL-13 | 组件/数据版本、用途、许可证、来源 | 依据 METADATA、package-lock 与 source registry；无猜测 | `open-source-and-data-sources-v1.0.md` | PASS |
+| GOAL-14 | 可直接用于材料制作的真实证据包 | 截图清单、录屏步骤、实测指标、版本、Mermaid、风险均完成 | `material-evidence-pack-v1.0.md` | PASS |
+
+### RC 实际能力与边界
+
+- D02/D03：活动 YOLO26n 自动检测 + 人工复核。
+- D01/D04/D05：开放集变化发现 + 人工复核，不是模型自动分类。
+- 视频：`VIDEO_DAMAGE_KEYFRAME_SCREENING`，不是行为识别。
+- 风险：`responsibility-risk-rules-v1.0` 确定性规则，不是责任概率或法律判责。
+- 物流：匿名 JSON/CSV 通用适配器，不冒充真实企业 API。
+- 真实连续序列：未发现通过权限与隐私审核的同包裹 N1/N2/N3 多表面数据，
+  `REAL_WORLD_CALIBRATION = PENDING_EXTERNAL_DATA`；协议见
+  `docs/dataset/real-sequence-validation-protocol-v1.0.md`，不阻断 RC。
+- Stretch model：未执行；本轮禁止在 MUST GOAL 完成前训练，完成后也没有必要冒险替换 active detector。
+
+### RC 外部证据
+
+- release manifest：`E:\JianZhengData\runtime\competition-rc-v1.0\release\competition-release-manifest-v1.0.json`
+- real Uvicorn E2E：`E:\JianZhengData\runtime\competition-rc-v1.0\competition-e2e-v1.0.json`
+- stability：`E:\JianZhengData\runtime\competition-rc-v1.0\competition-release-stability-v1.0.json`
+- performance：`E:\JianZhengData\runtime\competition-rc-v1.0\performance-v1.0.json`
+- demo duration：`E:\JianZhengData\runtime\competition-rc-v1.0\demo-duration-v1.0.json`
+- validation：`E:\JianZhengData\runtime\competition-validation-v1.0\competition-validation-summary-v1.0.json`
+- start/self-check/stop：`E:\JianZhengData\runtime\competition-rc-v1.0\evidence\start-selfcheck-stop-v1.0.json`
+- postflight invariants：`E:\JianZhengData\runtime\competition-rc-v1.0\evidence\postflight-invariants-v1.0.json`
+
+本轮最大剩余风险是现实采集域差异，而不是业务闭环缺失。下一阶段只剩按最小协议采集并审核
+真实受控序列、做 real-world calibration；不应把这一待办改写成当前已验证能力。
+
+终验再次确认：正式 start 脚本已在 8030 端口完成 self-check、GPU warmup、health 和安全 stop，
+服务停止后无 listener；raw、frozen、baseline/candidate model history、runtime v0.1/v0.2 与 active
+registry 的文件数、字节数、metadata/content tree SHA 均与 preflight 精确一致。

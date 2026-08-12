@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .schemas import CaseCreate, ReviewCreate
+from .schemas import CaseCreate, ReviewCreate, WorkOrderCreate, WorkOrderEventCreate
 from .services import MVPError, MVPService
 
 LOGGER = logging.getLogger("jianzheng.mvp")
@@ -28,7 +28,7 @@ def error_response(code: str, message: str, details: dict[str, Any], status: int
 
 
 def create_app(
-    config_path: str | Path = "configs/runtime/mvp-v0.2.json",
+    config_path: str | Path = "configs/runtime/competition-rc-v1.0.json",
     service: MVPService | None = None,
 ) -> FastAPI:
     active_service = service or MVPService(config_path)
@@ -43,8 +43,8 @@ def create_app(
         yield
 
     app = FastAPI(
-        title="件证 Competition MVP",
-        version="0.2.0",
+        title="件证 Competition Release Candidate",
+        version="1.0.0-rc.1",
         lifespan=lifespan,
     )
     app.state.service = active_service
@@ -166,6 +166,73 @@ def create_app(
     @app.get("/api/cases/{case_id}/reviews")
     def list_reviews(case_id: str):
         return {"reviews": app.state.service.list_reviews(case_id)}
+
+    @app.get("/api/cases/{case_id}/risk")
+    def case_risk(case_id: str):
+        return app.state.service.risk_for(case_id)
+
+    @app.post("/api/cases/{case_id}/logistics/import")
+    async def import_logistics(
+        case_id: str,
+        data_format: Annotated[str, Form(...)],
+        file: Annotated[UploadFile, File(...)],
+    ):
+        nodes = app.state.service.import_logistics(
+            case_id, await file.read(), data_format
+        )
+        return {"case_id": case_id, "format": data_format.lower(), "nodes": nodes}
+
+    @app.get("/api/cases/{case_id}/logistics")
+    def list_logistics(case_id: str):
+        return {"case_id": case_id, "nodes": app.state.service.list_logistics(case_id)}
+
+    @app.post("/api/cases/{case_id}/work-orders")
+    def create_work_order(case_id: str, payload: WorkOrderCreate):
+        return app.state.service.create_work_order(case_id, payload.model_dump())
+
+    @app.get("/api/cases/{case_id}/work-orders")
+    def list_work_orders(case_id: str):
+        return {"work_orders": app.state.service.list_work_orders(case_id)}
+
+    @app.post("/api/work-orders/{work_order_id}/events")
+    def create_work_order_event(work_order_id: str, payload: WorkOrderEventCreate):
+        return app.state.service.add_work_order_event(
+            work_order_id, payload.model_dump()
+        )
+
+    @app.get("/api/dashboard/summary")
+    def dashboard_summary():
+        return app.state.service.dashboard_summary()
+
+    @app.get("/api/dashboard/trends")
+    def dashboard_trends():
+        return app.state.service.dashboard_trends()
+
+    @app.post("/api/video/analyze")
+    async def analyze_video(
+        file: Annotated[UploadFile, File(...)],
+        sample_interval_frames: Annotated[int, Form()] = 5,
+        top_k: Annotated[int, Form()] = 5,
+    ):
+        return app.state.service.analyze_video(
+            await file.read(),
+            file.filename or "",
+            file.content_type,
+            sample_interval_frames,
+            top_k,
+        )
+
+    @app.get("/api/video/keyframes/{analysis_id}/{filename}")
+    def video_keyframe(analysis_id: str, filename: str):
+        if not analysis_id.startswith("video-") or Path(filename).name != filename:
+            raise MVPError("VIDEO_KEYFRAME_INVALID", "关键帧路径无效。", 404)
+        root = (
+            app.state.service.runtime_root / "video" / analysis_id / "keyframes"
+        ).resolve()
+        path = (root / filename).resolve()
+        if path.parent != root or not path.is_file() or path.suffix.lower() != ".jpg":
+            raise MVPError("VIDEO_KEYFRAME_NOT_FOUND", "关键帧不存在。", 404)
+        return FileResponse(path, media_type="image/jpeg")
 
     @app.get("/api/cases")
     def list_cases():

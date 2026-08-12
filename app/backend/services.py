@@ -20,17 +20,44 @@ from ai.runtime.detector import Detector
 from ai.runtime.evidence_report import generate_evidence_report
 from ai.runtime.fingerprint import build_node_fingerprint_summary
 from ai.runtime.model_registry import ModelRegistry
+from ai.runtime.risk_engine import RiskEngine
 from ai.runtime.registration import ImageRegistrar
 from ai.runtime.sequence_locator import locate_multisurface_first_abnormality
 from ai.runtime.surface_analyzer import SurfaceAnalyzer
 from ai.runtime.surfaces import SUPPORTED_SURFACES, normalize_surface
+from ai.runtime.video_screening import VideoScreeningError, screen_video
 
+from .logistics_adapter import LogisticsValidationError, parse_logistics
 from .storage.database import EvidenceDatabase
 
 NODE_ID_PATTERN = re.compile(r"^N[1-9][0-9]*$")
 REVIEW_CLASSES = {"D01", "D02", "D03", "D04", "D05", "NORMAL_VARIATION", "UNSURE"}
 REVIEW_STATUSES = {"CONFIRMED", "REJECTED", "UNSURE"}
 REVIEWER_ALIASES = {"MEMBER-A", "MEMBER-B", "MEMBER-C", "DEMO-REVIEWER"}
+WORK_ORDER_ALIASES = {"MEMBER-A", "MEMBER-B", "MEMBER-C", "DEMO-OPERATOR"}
+WORK_ORDER_STATES = {
+    "OPEN",
+    "IN_REVIEW",
+    "NEEDS_MORE_EVIDENCE",
+    "CONFIRMED",
+    "REJECTED",
+    "RESOLVED",
+}
+WORK_ORDER_EVENT_TYPES = {
+    "ASSIGN",
+    "STATE_CHANGE",
+    "NOTE",
+    "EVIDENCE_REQUEST",
+    "RESOLVE",
+}
+WORK_ORDER_TRANSITIONS = {
+    "OPEN": {"IN_REVIEW", "NEEDS_MORE_EVIDENCE", "REJECTED", "RESOLVED"},
+    "IN_REVIEW": {"NEEDS_MORE_EVIDENCE", "CONFIRMED", "REJECTED", "RESOLVED"},
+    "NEEDS_MORE_EVIDENCE": {"IN_REVIEW", "REJECTED", "RESOLVED"},
+    "CONFIRMED": {"RESOLVED"},
+    "REJECTED": {"RESOLVED"},
+    "RESOLVED": set(),
+}
 
 
 class MVPError(RuntimeError):
@@ -53,14 +80,14 @@ class MVPService:
 
     def __init__(
         self,
-        config_path: str | Path = "configs/runtime/mvp-v0.2.json",
+        config_path: str | Path = "configs/runtime/competition-rc-v1.0.json",
         detector: Detector | None = None,
         database: EvidenceDatabase | None = None,
     ):
         self.config_path = Path(config_path)
         self.config = json.loads(self.config_path.read_text(encoding="utf-8"))
         self.runtime_root = Path(self.config["runtime_root"])
-        for directory in ("cases", "reports", "logs", "demo", "calibration"):
+        for directory in ("cases", "reports", "logs", "demo", "calibration", "video"):
             (self.runtime_root / directory).mkdir(parents=True, exist_ok=True)
         self.registry = ModelRegistry(self.config["active_model_registry"])
         self.detector = detector or Detector(
@@ -74,7 +101,11 @@ class MVPService:
         self.database = database or EvidenceDatabase(
             self.config["database_path"],
             bootstrap_from=self.config.get("bootstrap_database_from"),
+            target_schema_version=(
+                3 if "rc-v1.0" in self.config["pipeline_version"] else 2
+            ),
         )
+        self.risk_engine = RiskEngine()
         self._warmup_result: dict[str, Any] | None = None
 
     @staticmethod
@@ -314,6 +345,10 @@ class MVPService:
             "total": (time.perf_counter() - total_started) * 1000.0,
         }
         reviews = self.database.list_reviews(case_id)
+        risk_started = time.perf_counter()
+        risk = self.risk_engine.assess(analysis, pair_results, source_nodes, reviews)
+        risk_ms = (time.perf_counter() - risk_started) * 1000.0
+        report_started = time.perf_counter()
         report = generate_evidence_report(
             case,
             node_results,
@@ -324,7 +359,17 @@ class MVPService:
             node_summaries=summaries,
             reviews=reviews,
             report_revision=len(reviews),
+            logistics_nodes=case.get("logistics_nodes", []),
+            risk=risk,
+            work_orders=case.get("work_orders", []),
+            report_version=(
+                "evidence-report-v1.0"
+                if "rc-v1.0" in self.config["pipeline_version"]
+                else None
+            ),
         )
+        report_ms = (time.perf_counter() - report_started) * 1000.0
+        database_started = time.perf_counter()
         self.database.store_analysis(
             case_id,
             analysis["created_at"],
@@ -333,14 +378,25 @@ class MVPService:
             analysis,
             report,
         )
+        self.database.store_risk(case_id, self.now(), risk)
+        database_ms = (time.perf_counter() - database_started) * 1000.0
+        processing_breakdown = {
+            "core_analysis": analysis["timing_ms"]["total"],
+            "database": database_ms,
+            "risk_engine": risk_ms,
+            "report": report_ms,
+            "total_request": (time.perf_counter() - total_started) * 1000.0,
+        }
         return {
             "case_id": case_id,
             "nodes": node_results,
             "node_fingerprint_summaries": summaries,
             "pair_changes": pair_results,
             "analysis": analysis,
+            "risk": risk,
             "reviews": reviews,
             "report": report,
+            "processing_breakdown_ms": processing_breakdown,
         }
 
     @staticmethod
@@ -442,6 +498,247 @@ class MVPService:
         self._regenerate_report(case_id, reviews)
         return record
 
+    def risk_for(self, case_id: str) -> dict[str, Any]:
+        try:
+            case = self.database.get_case(case_id)
+        except KeyError as error:
+            raise MVPError("CASE_NOT_FOUND", "案例不存在。", 404) from error
+        if not case.get("analysis"):
+            raise MVPError("CASE_NOT_ANALYZED", "必须先完成机器分析。", 409)
+        risk = self.risk_engine.assess(
+            case["analysis"]["result"],
+            case.get("pair_changes", []),
+            case.get("nodes", []),
+            case.get("reviews", []),
+        )
+        return self.database.store_risk(case_id, self.now(), risk)
+
+    def import_logistics(
+        self, case_id: str, content: bytes, data_format: str
+    ) -> list[dict[str, Any]]:
+        try:
+            self.database.get_case(case_id, include_details=False)
+        except KeyError as error:
+            raise MVPError("CASE_NOT_FOUND", "案例不存在。", 404) from error
+        try:
+            nodes = parse_logistics(content, data_format)
+        except LogisticsValidationError as error:
+            raise MVPError(
+                "LOGISTICS_VALIDATION_FAILED",
+                str(error),
+                422,
+                {"row": error.row, "field": error.field},
+            ) from error
+        stored = self.database.replace_logistics_nodes(case_id, nodes, self.now())
+        case = self.database.get_case(case_id)
+        if case.get("analysis"):
+            self._regenerate_report(case_id, case.get("reviews", []))
+        return stored
+
+    def list_logistics(self, case_id: str) -> list[dict[str, Any]]:
+        try:
+            return self.database.list_logistics_nodes(case_id)
+        except KeyError as error:
+            raise MVPError("CASE_NOT_FOUND", "案例不存在。", 404) from error
+
+    @staticmethod
+    def _event_sha(payload: dict[str, Any]) -> str:
+        canonical = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
+
+    def create_work_order(
+        self, case_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        actor = str(payload.get("actor_alias", "DEMO-OPERATOR"))
+        assigned = payload.get("assigned_alias") or None
+        if actor not in WORK_ORDER_ALIASES or (
+            assigned is not None and assigned not in WORK_ORDER_ALIASES
+        ):
+            raise MVPError(
+                "WORK_ORDER_ALIAS_INVALID", "只能使用预设匿名人员代号。", 422
+            )
+        title = str(payload.get("title", "")).strip()
+        if not title or len(title) > 120:
+            raise MVPError(
+                "WORK_ORDER_TITLE_INVALID", "工单标题长度必须为 1-120。", 422
+            )
+        created_at = self.now()
+        work_order_id = f"wo-{uuid.uuid4().hex}"
+        order = {
+            "work_order_id": work_order_id,
+            "case_id": case_id,
+            "title": title,
+            "current_state": "OPEN",
+            "assigned_alias": assigned,
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+        stable = {
+            "work_order_id": work_order_id,
+            "event_type": "CREATE",
+            "previous_state": None,
+            "current_state": "OPEN",
+            "actor_alias": actor,
+            "note": str(payload.get("note", "")),
+            "evidence_request": "",
+            "created_at": created_at,
+        }
+        event = {
+            "event_id": f"woe-{uuid.uuid4().hex}",
+            **stable,
+            "payload_sha256": self._event_sha(stable),
+        }
+        try:
+            result = self.database.create_work_order(order, event)
+        except KeyError as error:
+            raise MVPError("CASE_NOT_FOUND", "案例不存在。", 404) from error
+        case = self.database.get_case(case_id)
+        if case.get("analysis"):
+            self._regenerate_report(case_id, case.get("reviews", []))
+        return result
+
+    def add_work_order_event(
+        self, work_order_id: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            order = self.database.work_order_for(work_order_id)
+        except KeyError as error:
+            raise MVPError("WORK_ORDER_NOT_FOUND", "工单不存在。", 404) from error
+        event_type = str(payload.get("event_type", "")).upper()
+        actor = str(payload.get("actor_alias", ""))
+        if event_type not in WORK_ORDER_EVENT_TYPES:
+            raise MVPError("WORK_ORDER_EVENT_INVALID", "工单事件类型不受支持。", 422)
+        if actor not in WORK_ORDER_ALIASES:
+            raise MVPError(
+                "WORK_ORDER_ALIAS_INVALID", "只能使用预设匿名人员代号。", 422
+            )
+        previous_state = order["current_state"]
+        current_state = previous_state
+        assigned = order.get("assigned_alias")
+        if event_type in {"STATE_CHANGE", "RESOLVE"}:
+            current_state = (
+                "RESOLVED"
+                if event_type == "RESOLVE"
+                else str(payload.get("new_state", "")).upper()
+            )
+            if current_state not in WORK_ORDER_STATES:
+                raise MVPError("WORK_ORDER_STATE_INVALID", "工单状态不受支持。", 422)
+            if current_state not in WORK_ORDER_TRANSITIONS[previous_state]:
+                raise MVPError(
+                    "WORK_ORDER_TRANSITION_INVALID",
+                    f"不允许 {previous_state} → {current_state}。",
+                    409,
+                )
+        if event_type == "ASSIGN":
+            assigned = payload.get("assigned_alias")
+            if assigned not in WORK_ORDER_ALIASES:
+                raise MVPError(
+                    "WORK_ORDER_ALIAS_INVALID", "分派对象不是预设匿名代号。", 422
+                )
+        note = str(payload.get("note", ""))
+        evidence_request = str(payload.get("evidence_request", ""))
+        if event_type == "EVIDENCE_REQUEST" and not evidence_request.strip():
+            raise MVPError("EVIDENCE_REQUEST_EMPTY", "补证要求不能为空。", 422)
+        if len(note) > 500 or len(evidence_request) > 500:
+            raise MVPError(
+                "WORK_ORDER_TEXT_TOO_LONG", "工单文本不能超过 500 字符。", 422
+            )
+        created_at = self.now()
+        stable = {
+            "work_order_id": work_order_id,
+            "event_type": event_type,
+            "previous_state": previous_state,
+            "current_state": current_state,
+            "actor_alias": actor,
+            "note": note,
+            "evidence_request": evidence_request,
+            "created_at": created_at,
+        }
+        event = {
+            "event_id": f"woe-{uuid.uuid4().hex}",
+            **stable,
+            "payload_sha256": self._event_sha(stable),
+        }
+        result = self.database.add_work_order_event(
+            work_order_id,
+            event,
+            state=current_state,
+            assigned_alias=assigned,
+            updated_at=created_at,
+        )
+        case = self.database.get_case(result["case_id"])
+        if case.get("analysis"):
+            self._regenerate_report(result["case_id"], case.get("reviews", []))
+        return result
+
+    def list_work_orders(self, case_id: str) -> list[dict[str, Any]]:
+        try:
+            return self.database.list_work_orders(case_id)
+        except KeyError as error:
+            raise MVPError("CASE_NOT_FOUND", "案例不存在。", 404) from error
+
+    def dashboard_summary(self) -> dict[str, Any]:
+        return self.database.dashboard_summary()
+
+    def dashboard_trends(self) -> dict[str, Any]:
+        return self.database.dashboard_trends()
+
+    def analyze_video(
+        self,
+        content: bytes,
+        filename: str,
+        content_type: str | None,
+        sample_interval_frames: int,
+        top_k: int,
+    ) -> dict[str, Any]:
+        if not content:
+            raise MVPError("VIDEO_EMPTY", "视频内容为空。", 422)
+        if len(content) > int(self.config.get("max_video_upload_bytes", 104_857_600)):
+            raise MVPError("VIDEO_TOO_LARGE", "视频超过允许的最大文件大小。", 413)
+        if Path(filename or "").suffix.lower() != ".mp4":
+            raise MVPError("VIDEO_EXTENSION_INVALID", "仅支持 MP4。", 422)
+        if content_type not in {"video/mp4", "application/octet-stream"}:
+            raise MVPError("VIDEO_MIME_INVALID", "视频 MIME 类型不受支持。", 422)
+        analysis_id = f"video-{uuid.uuid4().hex}"
+        root = self.runtime_root / "video" / analysis_id
+        root.mkdir(parents=True, exist_ok=False)
+        source = root / "source.mp4"
+        source.write_bytes(content)
+        try:
+            result = screen_video(
+                source,
+                self.detector,
+                root / "keyframes",
+                sample_interval_frames=sample_interval_frames,
+                top_k=top_k,
+            )
+        except VideoScreeningError as error:
+            raise MVPError("VIDEO_DECODE_FAILED", str(error), 422) from error
+        result.update(
+            {
+                "analysis_id": analysis_id,
+                "created_at": self.now(),
+                "model_version": self.registry.model_version,
+                "model_sha256": self.registry.data["sha256"],
+            }
+        )
+        for keyframe in result["top_abnormal_keyframes"]:
+            keyframe["url"] = (
+                f"/api/video/keyframes/{analysis_id}/{keyframe['filename']}"
+            )
+        (root / "result.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        self.database.store_video_analysis(
+            analysis_id,
+            result["created_at"],
+            result["video_metadata"]["source_sha256"],
+            result,
+        )
+        return result
+
     def _regenerate_report(
         self, case_id: str, reviews: list[dict[str, Any]]
     ) -> dict[str, str]:
@@ -449,6 +746,12 @@ class MVPService:
         node_results = [item["result"] for item in case["surface_analysis"]]
         pair_results = [item["result"] for item in case["pair_changes"]]
         analysis = case["analysis"]["result"]
+        risk = self.risk_engine.assess(
+            analysis, pair_results, case.get("nodes", []), reviews
+        )
+        self.database.store_risk(case_id, self.now(), risk)
+        # Reload so the current work-order/logistics/risk state is reflected.
+        case = self.database.get_case(case_id)
         report = generate_evidence_report(
             case,
             node_results,
@@ -459,6 +762,14 @@ class MVPService:
             node_summaries=analysis.get("node_fingerprint_summaries", []),
             reviews=reviews,
             report_revision=len(reviews),
+            logistics_nodes=case.get("logistics_nodes", []),
+            risk=risk,
+            work_orders=case.get("work_orders", []),
+            report_version=(
+                "evidence-report-v1.0"
+                if "rc-v1.0" in self.config["pipeline_version"]
+                else None
+            ),
         )
         self.database.update_report(case_id, self.now(), report)
         return report

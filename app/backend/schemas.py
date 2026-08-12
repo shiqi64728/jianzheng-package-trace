@@ -25,3 +25,19 @@ class ReviewCreate(BaseModel):
     reviewer_alias: str = Field(min_length=3, max_length=32)
     review_note: str = Field(default="", max_length=500)
     supersedes_review_id: str | None = Field(default=None, max_length=80)
+
+
+class WorkOrderCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    assigned_alias: str | None = Field(default=None, max_length=32)
+    actor_alias: str = Field(default="DEMO-OPERATOR", min_length=3, max_length=32)
+    note: str = Field(default="", max_length=500)
+
+
+class WorkOrderEventCreate(BaseModel):
+    event_type: str = Field(min_length=3, max_length=32)
+    actor_alias: str = Field(min_length=3, max_length=32)
+    new_state: str | None = Field(default=None, max_length=32)
+    assigned_alias: str | None = Field(default=None, max_length=32)
+    note: str = Field(default="", max_length=500)
+    evidence_request: str = Field(default="", max_length=500)

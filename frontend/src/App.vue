@@ -2,163 +2,154 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from './api'
 
-const nodeIds = ['N1', 'N2', 'N3']
-const allSurfaces = ['front', 'left', 'right', 'top']
-const surfaceLabels = { front: '正面', left: '左侧', right: '右侧', top: '顶部' }
-const files = reactive(Object.fromEntries(nodeIds.map(node => [node, Object.fromEntries(allSurfaces.map(surface => [surface, null]))])))
-const previews = reactive(Object.fromEntries(nodeIds.map(node => [node, Object.fromEntries(allSurfaces.map(surface => [surface, '']))])))
-const mode = ref('simple')
+const nav = ['Dashboard', 'New Case', 'Case Detail', 'Evidence', 'Reviews', 'Work Orders', 'Video Screening', 'System Status']
+const page = ref('Dashboard')
+const nodes = ['N1', 'N2', 'N3']
+const surfaces = ['front', 'left', 'right', 'top']
+const surfaceNames = { front: '正面', left: '左侧', right: '右侧', top: '顶部' }
+const files = reactive(Object.fromEntries(nodes.map(n => [n, Object.fromEntries(surfaces.map(s => [s, null]))])))
+const previews = reactive(Object.fromEntries(nodes.map(n => [n, Object.fromEntries(surfaces.map(s => [s, '']))])))
+const mode = ref('multi')
 const caseName = ref('比赛现场匿名多表面演示')
 const caseId = ref('')
+const currentCase = ref(null)
 const result = ref(null)
 const reviews = ref([])
+const orders = ref([])
+const dashboard = ref(null)
+const trends = ref(null)
+const health = ref(null)
 const model = ref(null)
 const warmup = ref(null)
+const message = ref('系统准备中')
 const busy = ref(false)
-const reviewing = ref(false)
-const message = ref('Simple Mode 默认上传 N1/N2/N3 正面；可切换 Multi-Surface Mode。')
-const reviewForm = reactive({
-  node_from: 'N1', node_to: 'N2', surface: 'left', review_class: 'D05',
-  review_status: 'CONFIRMED', reviewer_alias: 'DEMO-REVIEWER', review_note: '',
-  supersedes_review_id: null,
-})
+const logisticsFile = ref(null)
+const logisticsFormat = ref('json')
+const videoFile = ref(null)
+const videoResult = ref(null)
 
-const displayedSurfaces = computed(() => mode.value === 'simple' ? ['front'] : allSurfaces)
-const ready = computed(() => nodeIds.every(node => displayedSurfaces.value.some(surface => files[node][surface])))
+const reviewForm = reactive({ node_from: 'N1', node_to: 'N2', surface: 'left', review_class: 'D05', review_status: 'CONFIRMED', reviewer_alias: 'MEMBER-C', review_note: '', supersedes_review_id: null })
+const orderForm = reactive({ title: '首次异常区间人工复核', assigned_alias: 'MEMBER-C', actor_alias: 'DEMO-OPERATOR', note: '比赛演示工单' })
+const eventForm = reactive({ event_type: 'STATE_CHANGE', actor_alias: 'MEMBER-C', new_state: 'IN_REVIEW', note: '' })
 
-onMounted(async () => {
+const shownSurfaces = computed(() => mode.value === 'simple' ? ['front'] : surfaces)
+const ready = computed(() => nodes.every(n => shownSurfaces.value.some(s => files[n][s])))
+
+onMounted(refreshSystem)
+
+async function refreshSystem() {
   try {
-    [model.value, warmup.value] = await Promise.all([api.modelInfo(), api.warmup()])
+    [health.value, model.value, warmup.value, dashboard.value, trends.value] = await Promise.all([
+      api.health(), api.modelInfo(), api.warmup(), api.dashboardSummary(), api.dashboardTrends(),
+    ])
+    message.value = 'Competition RC v1.0 已就绪'
   } catch (error) { message.value = error.message }
-})
-
-function selectFile(nodeId, surface, event) {
-  const file = event.target.files?.[0]
-  if (!file) return
-  files[nodeId][surface] = file
-  if (previews[nodeId][surface]) URL.revokeObjectURL(previews[nodeId][surface])
-  previews[nodeId][surface] = URL.createObjectURL(file)
 }
 
-function captureResult(nodeId, surface) {
-  return result.value?.nodes?.find(item => item.node_id === nodeId && item.surface === surface)
+async function selectPage(name) {
+  page.value = name
+  if (name === 'Dashboard') await refreshDashboard()
+  if (caseId.value && ['Case Detail', 'Evidence', 'Reviews', 'Work Orders'].includes(name)) await refreshCase()
 }
 
-function incomingPair(nodeId, surface) {
-  return result.value?.pair_changes?.find(item => item.current_node_id === nodeId && item.surface === surface)
+async function refreshDashboard() {
+  try { [dashboard.value, trends.value] = await Promise.all([api.dashboardSummary(), api.dashboardTrends()]) } catch (error) { message.value = error.message }
 }
 
-function surfaceState(nodeId, surface) {
-  const node = result.value?.analysis?.node_states?.find(item => item.node_id === nodeId)
-  return node?.surface_states?.find(item => item.surface === surface)?.status || (files[nodeId][surface] ? '待分析' : 'MISSING')
+async function refreshCase() {
+  if (!caseId.value) return
+  try {
+    [currentCase.value, reviews.value, orders.value] = await Promise.all([
+      api.getCase(caseId.value), api.reviews(caseId.value).then(x => x.reviews), api.workOrders(caseId.value).then(x => x.work_orders),
+    ])
+  } catch (error) { message.value = error.message }
 }
 
-function reviewFor(nodeId, surface) {
-  return reviews.value.findLast?.(item => item.node_to === nodeId && item.surface === surface)
-    || [...reviews.value].reverse().find(item => item.node_to === nodeId && item.surface === surface)
-}
-
-function initializeReview() {
-  const interval = result.value?.analysis?.first_abnormal_interval
-  if (interval) {
-    const [from, to] = interval.split('_TO_')
-    reviewForm.node_from = from
-    reviewForm.node_to = to
-  }
-  reviewForm.surface = result.value?.analysis?.trigger_surfaces?.[0]?.surface || 'front'
+function chooseImage(node, surface, event) {
+  const file = event.target.files?.[0]; if (!file) return
+  files[node][surface] = file
+  if (previews[node][surface]) URL.revokeObjectURL(previews[node][surface])
+  previews[node][surface] = URL.createObjectURL(file)
 }
 
 async function runAnalysis() {
   if (!ready.value) return
   busy.value = true
-  result.value = null
-  reviews.value = []
   try {
-    const created = await api.createCase(caseName.value)
-    caseId.value = created.case_id
-    for (const nodeId of nodeIds) {
-      for (const surface of displayedSurfaces.value) {
-        if (files[nodeId][surface]) await api.uploadNode(caseId.value, nodeId, surface, files[nodeId][surface])
-      }
-    }
+    const created = await api.createCase(caseName.value); caseId.value = created.case_id
+    for (const node of nodes) for (const surface of shownSurfaces.value) if (files[node][surface]) await api.uploadNode(caseId.value, node, surface, files[node][surface])
     result.value = await api.analyze(caseId.value)
-    reviews.value = result.value.reviews || []
-    initializeReview()
-    message.value = '多表面端到端分析完成，机器证据已写入 SQLite。'
+    reviewForm.surface = result.value.analysis.trigger_surfaces?.[0]?.surface || 'front'
+    if (result.value.analysis.first_abnormal_interval) [reviewForm.node_from, reviewForm.node_to] = result.value.analysis.first_abnormal_interval.split('_TO_')
+    await refreshCase(); await refreshDashboard(); page.value = 'Evidence'; message.value = '分析完成，证据与风险规则结果已写入 SQLite'
   } catch (error) { message.value = error.message } finally { busy.value = false }
 }
 
 async function submitReview() {
-  reviewing.value = true
-  try {
-    const created = await api.createReview(caseId.value, { ...reviewForm })
-    reviews.value = (await api.reviews(caseId.value)).reviews
-    reviewForm.supersedes_review_id = created.review_id
-    message.value = '人工复核事件已追加；机器结果未被覆盖。再次提交将形成 supersede 审计链。'
-  } catch (error) { message.value = error.message } finally { reviewing.value = false }
+  try { await api.createReview(caseId.value, { ...reviewForm }); await refreshCase(); result.value = await api.getCase(caseId.value).then(x => ({ analysis: x.analysis?.result, risk: x.risk?.result })); message.value = '人工复核事件已追加，机器证据未覆盖' } catch (error) { message.value = error.message }
 }
+
+async function importTimeline() {
+  if (!logisticsFile.value || !caseId.value) return
+  try { await api.importLogistics(caseId.value, logisticsFormat.value, logisticsFile.value); await refreshCase(); message.value = '匿名结构化物流节点已导入' } catch (error) { message.value = error.message }
+}
+
+async function createOrder() {
+  try { await api.createWorkOrder(caseId.value, { ...orderForm }); await refreshCase(); message.value = '工单已创建：OPEN' } catch (error) { message.value = error.message }
+}
+
+async function addOrderEvent(id) {
+  try { await api.workOrderEvent(id, { ...eventForm }); await refreshCase(); message.value = '工单事件已追加' } catch (error) { message.value = error.message }
+}
+
+async function analyzeVideo() {
+  if (!videoFile.value) return
+  busy.value = true
+  try { videoResult.value = await api.analyzeVideo(videoFile.value); message.value = 'VIDEO_DAMAGE_KEYFRAME_SCREENING 完成' } catch (error) { message.value = error.message } finally { busy.value = false }
+}
+
+const risk = computed(() => result.value?.risk || currentCase.value?.risk?.result)
+const analysis = computed(() => result.value?.analysis || currentCase.value?.analysis?.result)
 </script>
 
 <template>
-  <main>
-    <header class="masthead">
-      <div><p class="eyebrow">JIANZHENG · COMPETITION MVP v0.2</p><h1>件证</h1>
-        <h2>多表面连续外观数字指纹与异常节点定位</h2></div>
-      <div class="model-chip"><span>活动模型</span><strong>{{ model?.model_version || '连接中' }}</strong>
-        <small>{{ model?.runtime || '—' }} · {{ model?.imgsz || '—' }}px · {{ warmup?.loaded ? '已预热' : '惰性加载' }}</small></div>
-    </header>
+  <div class="shell">
+    <aside><div class="brand"><b>件证</b><span>Competition RC v1.0</span></div>
+      <nav><button v-for="item in nav" :key="item" :class="{ active: page === item }" @click="selectPage(item)">{{ item }}</button></nav>
+      <div class="boundary">AI 自动：D02 / D03<br>开放集 + 人工：D01 / D04 / D05<br>法律责任：不支持自动认定</div>
+    </aside>
+    <main>
+      <header><div><p class="eyebrow">CONTINUOUS APPEARANCE EVIDENCE</p><h1>{{ page }}</h1></div><div class="system-chip"><b>{{ health?.status || 'connecting' }}</b><span>{{ health?.pipeline_version }}</span><small>{{ model?.model_version }}</small></div></header>
+      <div class="notice">{{ message }}</div>
 
-    <section class="toolbar panel">
-      <label>匿名案例名称<input v-model="caseName" maxlength="120" /></label>
-      <div class="mode-switch"><button :class="{selected: mode === 'simple'}" @click="mode='simple'">Simple Mode</button>
-        <button :class="{selected: mode === 'multi'}" @click="mode='multi'">Multi-Surface Mode</button></div>
-      <button class="primary" :disabled="!ready || busy" @click="runAnalysis">{{ busy ? '正在分析…' : '开始完整分析' }}</button>
-      <p class="status">{{ message }}</p>
-    </section>
-
-    <section class="panel"><div class="section-head"><div><p class="section-no">01 / CAPTURE MATRIX</p>
-      <h3>Node × Surface Matrix</h3></div><small>Multi-Surface Mode 允许缺失单元格；只比较相邻节点的同一表面。</small></div>
-      <div class="matrix-wrap"><table class="matrix"><thead><tr><th>Node</th><th v-for="surface in displayedSurfaces" :key="surface">{{ surfaceLabels[surface] }}<small>{{ surface }}</small></th></tr></thead>
-        <tbody><tr v-for="nodeId in nodeIds" :key="nodeId"><th>{{ nodeId }}</th>
-          <td v-for="surface in displayedSurfaces" :key="`${nodeId}-${surface}`">
-            <label class="image-drop"><img v-if="previews[nodeId][surface]" :src="previews[nodeId][surface]" :alt="`${nodeId}.${surface}`" />
-              <span v-else>上传<br>{{ nodeId }}.{{ surface }}</span><input type="file" accept="image/jpeg,image/png,image/webp" @change="selectFile(nodeId, surface, $event)" />
-              <i v-for="(box, index) in (captureResult(nodeId, surface)?.detections || [])" :key="index" class="box"
-                :style="{left:`${box.bbox_normalized[0]*100}%`,top:`${box.bbox_normalized[1]*100}%`,width:`${(box.bbox_normalized[2]-box.bbox_normalized[0])*100}%`,height:`${(box.bbox_normalized[3]-box.bbox_normalized[1])*100}%`}"><em>{{ box.class_code }} {{ box.confidence.toFixed(2) }}</em></i>
-            </label>
-            <div class="cell-meta"><b :class="surfaceState(nodeId,surface).toLowerCase()">{{ surfaceState(nodeId,surface) }}</b>
-              <span>已知损伤 {{ captureResult(nodeId,surface)?.detections?.length || 0 }}</span>
-              <span v-if="incomingPair(nodeId,surface)">变化 {{ (incomingPair(nodeId,surface).changed_pixel_ratio*100).toFixed(2) }}%</span>
-              <span v-if="reviewFor(nodeId,surface)" class="reviewed">人工 {{ reviewFor(nodeId,surface).review_class }}/{{ reviewFor(nodeId,surface).review_status }}</span></div>
-          </td></tr></tbody></table></div>
-    </section>
-
-    <section v-if="result" class="result-grid">
-      <section class="panel"><p class="section-no">02 / MACHINE EVIDENCE</p><h3>机器分析</h3>
-        <div class="verdict"><span>首次异常区间</span><strong>{{ result.analysis.first_abnormal_interval || result.analysis.conclusion_code }}</strong>
-          <p>{{ result.analysis.explanation }}</p><div class="grade">技术证据等级 <b>{{ result.analysis.evidence_level }}</b></div>
-          <h4>触发表面</h4><ul><li v-for="item in result.analysis.trigger_surfaces" :key="item.surface">{{ item.surface }} · {{ item.reason }} · {{ item.change_score.toFixed(3) }}</li><li v-if="!result.analysis.trigger_surfaces.length">无</li></ul>
-          <a :href="api.reportUrl(caseId)" target="_blank">打开 HTML v0.2 证据报告 →</a></div>
+      <section v-if="page === 'Dashboard'" class="page">
+        <div class="metrics">
+          <article><span>案例</span><b>{{ dashboard?.case_count ?? '—' }}</b></article><article><span>异常案例</span><b>{{ dashboard?.abnormal_case_count ?? '—' }}</b></article>
+          <article><span>待复核</span><b>{{ dashboard?.review_pending_count ?? '—' }}</b></article><article><span>工单</span><b>{{ dashboard?.work_order_count ?? '—' }}</b></article>
+          <article><span>已解决工单</span><b>{{ dashboard?.resolved_work_order_count ?? '—' }}</b></article><article><span>平均分析耗时</span><b>{{ dashboard?.average_analyze_time_ms ?? '—' }} ms</b></article>
+        </div>
+        <div class="cards two"><article class="panel"><h2>风险等级分布</h2><div v-for="(value,key) in dashboard?.risk_level_distribution" :key="key" class="bar"><span>{{ key }}</span><i :style="{width: `${Math.min(100,value*16)}%`}"></i><b>{{ value }}</b></div><p>来源：{{ dashboard?.source }}</p></article>
+          <article class="panel"><h2>最近趋势</h2><div class="trend"><span v-for="item in trends?.cases" :key="item.date" :title="item.date" :style="{height:`${20+item.count*12}px`}">{{ item.count }}</span></div><p>按 SQLite created_at 日聚合</p></article></div>
       </section>
 
-      <section class="panel review-panel"><p class="section-no">03 / HUMAN REVIEW</p><h3>人工复核（append-only）</h3>
-        <p class="hint">D01/D04/D05 由变化发现后人工分类，不表示模型自动识别。</p>
-        <div class="form-grid"><label>起点<input v-model="reviewForm.node_from" /></label><label>终点<input v-model="reviewForm.node_to" /></label>
-          <label>表面<select v-model="reviewForm.surface"><option v-for="surface in allSurfaces" :key="surface">{{ surface }}</option></select></label>
-          <label>复核类别<select v-model="reviewForm.review_class"><option>D01</option><option>D02</option><option>D03</option><option>D04</option><option>D05</option><option>NORMAL_VARIATION</option><option>UNSURE</option></select></label>
-          <label>状态<select v-model="reviewForm.review_status"><option>CONFIRMED</option><option>REJECTED</option><option>UNSURE</option></select></label>
-          <label>匿名复核人<select v-model="reviewForm.reviewer_alias"><option>MEMBER-A</option><option>MEMBER-B</option><option>MEMBER-C</option><option>DEMO-REVIEWER</option></select></label></div>
-        <label>备注<textarea v-model="reviewForm.review_note" maxlength="500" placeholder="不得填写真实姓名、手机号、地址或运单号" /></label>
-        <button class="primary" :disabled="reviewing" @click="submitReview">{{ reviewing ? '提交中…' : '追加复核事件' }}</button>
-        <ol class="review-list"><li v-for="item in reviews" :key="item.review_id"><b>{{ item.review_class }} / {{ item.review_status }}</b>
-          <span>机器：{{ item.machine_result }} · {{ item.node_from }}→{{ item.node_to }}.{{ item.surface }}</span><code>{{ item.review_payload_sha256.slice(0,16) }}…</code></li></ol>
+      <section v-if="page === 'New Case'" class="page panel">
+        <div class="row"><label>匿名案例名称<input v-model="caseName"></label><div class="seg"><button :class="{on:mode==='simple'}" @click="mode='simple'">Simple</button><button :class="{on:mode==='multi'}" @click="mode='multi'">Multi-Surface</button></div><button class="primary" :disabled="!ready || busy" @click="runAnalysis">{{ busy ? '分析中…' : '创建并分析' }}</button></div>
+        <div class="matrix"><div class="matrix-head">Node × Surface</div><div v-for="node in nodes" :key="node" class="matrix-row"><b>{{ node }}</b><label v-for="surface in shownSurfaces" :key="surface" class="drop"><img v-if="previews[node][surface]" :src="previews[node][surface]"><span v-else>{{ surfaceNames[surface] }}<small>{{ surface }}</small></span><input type="file" accept="image/jpeg,image/png,image/webp" @change="chooseImage(node,surface,$event)"></label></div></div>
       </section>
-    </section>
 
-    <section class="panel capabilities"><p class="section-no">04 / CAPABILITY BOUNDARY</p><h3>当前五类业务闭环</h3>
-      <div><p><b>D02 / D03</b><span>活动 AI 检测器自动识别 + 变化证据</span></p>
-        <p><b>D01 / D04 / D05</b><span>开放集视觉变化发现 → UNKNOWN_VISUAL_CHANGE → 人工复核分类</span></p></div>
-      <small>当前不是 D01/D04/D05 的 AI 自动分类支持。</small></section>
-    <footer>AI 已知异常检测 + 开放集变化检测 + 人工复核 + 多节点多表面证据融合；不直接构成法律责任结论。</footer>
-  </main>
+      <section v-if="page === 'Case Detail'" class="page cards two"><article class="panel"><h2>当前案例</h2><dl><dt>Case ID</dt><dd>{{ caseId || '尚未选择' }}</dd><dt>状态</dt><dd>{{ currentCase?.status }}</dd><dt>采集数</dt><dd>{{ currentCase?.nodes?.length || 0 }}</dd><dt>Pipeline</dt><dd>{{ currentCase?.pipeline_version }}</dd></dl></article>
+        <article class="panel"><h2>结构化物流时间线</h2><div class="row compact"><select v-model="logisticsFormat"><option>json</option><option>csv</option></select><input type="file" accept=".json,.csv" @change="logisticsFile=$event.target.files?.[0]"><button @click="importTimeline">导入</button></div><ol><li v-for="n in currentCase?.logistics_nodes" :key="n.node_id"><b>{{ n.node_id }} · {{ n.node_type }}</b> {{ n.event_time }} / {{ n.location_alias }}</li></ol></article></section>
+
+      <section v-if="page === 'Evidence'" class="page cards two"><article class="panel verdict"><span>首次异常区间</span><b>{{ analysis?.first_abnormal_interval || analysis?.conclusion_code || '尚未分析' }}</b><p>技术证据等级 {{ analysis?.evidence_level || '—' }}</p><ul><li v-for="item in analysis?.trigger_surfaces" :key="item.surface">{{ item.surface }} · {{ item.reason }}</li></ul><a v-if="caseId" :href="api.reportUrl(caseId)" target="_blank">打开 Evidence Report v1.0</a></article>
+        <article class="panel risk"><span>规则风险辅助分</span><b>{{ risk?.risk_score ?? '—' }}</b><strong>{{ risk?.risk_level }}</strong><p>不是法律责任结论 · 人工复核 {{ risk?.manual_review_required ? '必需' : '建议' }}</p><div v-for="part in risk?.score_breakdown" :key="part.component" class="score-line"><span>{{ part.component }}</span><b>{{ part.points }}/{{ part.max_points }}</b></div></article></section>
+
+      <section v-if="page === 'Reviews'" class="page panel"><h2>人工复核（append-only）</h2><p>D01/D04/D05 是开放集变化后的人工类别，不是 AI 自动分类。</p><div class="form-grid"><label>起点<input v-model="reviewForm.node_from"></label><label>终点<input v-model="reviewForm.node_to"></label><label>表面<select v-model="reviewForm.surface"><option v-for="s in surfaces" :key="s">{{ s }}</option></select></label><label>类别<select v-model="reviewForm.review_class"><option>D01</option><option>D02</option><option>D03</option><option>D04</option><option>D05</option><option>NORMAL_VARIATION</option><option>UNSURE</option></select></label><label>状态<select v-model="reviewForm.review_status"><option>CONFIRMED</option><option>REJECTED</option><option>UNSURE</option></select></label><label>匿名复核人<select v-model="reviewForm.reviewer_alias"><option>MEMBER-A</option><option>MEMBER-B</option><option>MEMBER-C</option><option>DEMO-REVIEWER</option></select></label></div><button class="primary" :disabled="!caseId" @click="submitReview">追加复核事件</button><div class="event" v-for="r in reviews" :key="r.review_id"><b>{{ r.review_class }} / {{ r.review_status }}</b><span>{{ r.node_from }}→{{ r.node_to }}.{{ r.surface }} · {{ r.reviewer_alias }}</span><code>{{ r.review_payload_sha256 }}</code></div></section>
+
+      <section v-if="page === 'Work Orders'" class="page panel"><h2>工单闭环</h2><div class="row"><input v-model="orderForm.title"><select v-model="orderForm.assigned_alias"><option>MEMBER-A</option><option>MEMBER-B</option><option>MEMBER-C</option><option>DEMO-OPERATOR</option></select><button class="primary" :disabled="!caseId" @click="createOrder">创建 OPEN 工单</button></div><article v-for="order in orders" :key="order.work_order_id" class="work-order"><div><b>{{ order.title }}</b><span>{{ order.current_state }} · {{ order.assigned_alias }}</span></div><div class="row compact"><select v-model="eventForm.event_type"><option>STATE_CHANGE</option><option>NOTE</option><option>EVIDENCE_REQUEST</option><option>ASSIGN</option><option>RESOLVE</option></select><select v-model="eventForm.new_state"><option>IN_REVIEW</option><option>NEEDS_MORE_EVIDENCE</option><option>CONFIRMED</option><option>REJECTED</option><option>RESOLVED</option></select><input v-model="eventForm.note" placeholder="备注"><button @click="addOrderEvent(order.work_order_id)">追加事件</button></div><ol><li v-for="e in order.events" :key="e.event_id">{{ e.event_type }} · {{ e.previous_state || '—' }}→{{ e.current_state }} · {{ e.actor_alias }}</li></ol></article></section>
+
+      <section v-if="page === 'Video Screening'" class="page panel"><h2>VIDEO_DAMAGE_KEYFRAME_SCREENING</h2><p>仅筛查 MP4 中 D02/D03 损伤关键帧，不是抛扔、违规动作或行为识别。</p><div class="row"><input type="file" accept="video/mp4" @change="videoFile=$event.target.files?.[0]"><button class="primary" :disabled="!videoFile || busy" @click="analyzeVideo">筛查视频</button></div><div v-if="videoResult" class="metrics"><article><span>采样帧</span><b>{{ videoResult.sampled_frame_count }}</b></article><article><span>异常帧</span><b>{{ videoResult.abnormal_frame_count }}</b></article><article><span>时长</span><b>{{ videoResult.video_metadata.duration_seconds }}s</b></article></div><div class="keyframes"><figure v-for="k in videoResult?.top_abnormal_keyframes" :key="k.filename"><img :src="api.assetUrl(k.url)"><figcaption>#{{ k.rank }} · {{ k.timestamp_seconds }}s · {{ k.detection_count }} detections</figcaption></figure></div></section>
+
+      <section v-if="page === 'System Status'" class="page cards two"><article class="panel"><h2>运行状态</h2><pre>{{ JSON.stringify(health, null, 2) }}</pre></article><article class="panel"><h2>活动模型</h2><pre>{{ JSON.stringify(model, null, 2) }}</pre><p>Warmup：{{ warmup?.loaded ? 'loaded' : 'lazy/fallback' }}</p></article></section>
+    </main>
+  </div>
 </template>
