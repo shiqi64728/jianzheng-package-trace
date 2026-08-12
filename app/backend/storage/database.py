@@ -15,8 +15,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+LEGACY_DEFAULT_SCHEMA_VERSION = 2
 MIGRATION_ID = "001-v01-case-nodes-to-multisurface-v02"
+RC_MIGRATION_ID = "002-v02-to-competition-rc-v10"
 
 BASE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS cases (
@@ -107,6 +109,57 @@ CREATE TABLE IF NOT EXISTS review_events (
     FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE,
     FOREIGN KEY (supersedes_review_id) REFERENCES review_events(review_id)
 );
+CREATE TABLE IF NOT EXISTS case_logistics_nodes (
+    case_id TEXT NOT NULL,
+    package_alias TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    node_type TEXT NOT NULL,
+    event_time TEXT NOT NULL,
+    location_alias TEXT NOT NULL,
+    device_alias TEXT NOT NULL,
+    status TEXT NOT NULL,
+    notes TEXT NOT NULL DEFAULT '',
+    imported_at TEXT NOT NULL,
+    PRIMARY KEY (case_id,node_id),
+    FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS risk_assessments (
+    case_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    risk_score INTEGER NOT NULL,
+    risk_level TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS work_orders (
+    work_order_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    current_state TEXT NOT NULL,
+    assigned_alias TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (case_id) REFERENCES cases(case_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS work_order_events (
+    event_id TEXT PRIMARY KEY,
+    work_order_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    previous_state TEXT,
+    current_state TEXT NOT NULL,
+    actor_alias TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    evidence_request TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    FOREIGN KEY (work_order_id) REFERENCES work_orders(work_order_id) ON DELETE RESTRICT
+);
+CREATE TABLE IF NOT EXISTS video_analyses (
+    analysis_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL,
+    result_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS schema_version (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     version INTEGER NOT NULL,
@@ -121,6 +174,12 @@ CREATE TABLE IF NOT EXISTS database_migrations (
 );
 CREATE INDEX IF NOT EXISTS idx_review_events_case_created
     ON review_events(case_id, created_at, review_id);
+CREATE INDEX IF NOT EXISTS idx_logistics_case_time
+    ON case_logistics_nodes(case_id,event_time,node_id);
+CREATE INDEX IF NOT EXISTS idx_work_orders_case_state
+    ON work_orders(case_id,current_state,created_at);
+CREATE INDEX IF NOT EXISTS idx_work_order_events_order_created
+    ON work_order_events(work_order_id,created_at,event_id);
 CREATE TRIGGER IF NOT EXISTS review_events_append_only_update
 BEFORE UPDATE ON review_events
 BEGIN
@@ -130,6 +189,16 @@ CREATE TRIGGER IF NOT EXISTS review_events_append_only_delete
 BEFORE DELETE ON review_events
 BEGIN
     SELECT RAISE(ABORT, 'review_events are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS work_order_events_append_only_update
+BEFORE UPDATE ON work_order_events
+BEGIN
+    SELECT RAISE(ABORT, 'work_order_events are append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS work_order_events_append_only_delete
+BEFORE DELETE ON work_order_events
+BEGIN
+    SELECT RAISE(ABORT, 'work_order_events are append-only');
 END;
 """
 
@@ -145,8 +214,12 @@ class EvidenceDatabase:
         self,
         path: str | Path,
         bootstrap_from: str | Path | None = None,
+        target_schema_version: int = LEGACY_DEFAULT_SCHEMA_VERSION,
     ):
         self.path = Path(path)
+        if target_schema_version not in {2, 3}:
+            raise ValueError("target_schema_version must be 2 or 3")
+        self.target_schema_version = target_schema_version
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if not self.path.exists() and bootstrap_from:
             source = Path(bootstrap_from)
@@ -217,12 +290,38 @@ class EvidenceDatabase:
             if prior is None:
                 connection.execute(
                     "INSERT INTO schema_version(singleton,version,applied_at) VALUES(1,?,?)",
-                    (SCHEMA_VERSION, _now()),
+                    (self.target_schema_version, _now()),
                 )
-            elif int(prior["version"]) < SCHEMA_VERSION:
+            elif int(prior["version"]) < self.target_schema_version:
+                if self.target_schema_version == 3:
+                    connection.execute(
+                        """INSERT OR IGNORE INTO database_migrations
+                        (migration_id,from_version,to_version,applied_at,details_json)
+                        VALUES(?,?,?,?,?)""",
+                        (
+                            RC_MIGRATION_ID,
+                            int(prior["version"]),
+                            self.target_schema_version,
+                            _now(),
+                            json.dumps(
+                                {
+                                    "strategy": "additive-only",
+                                    "added_tables": [
+                                        "case_logistics_nodes",
+                                        "risk_assessments",
+                                        "work_orders",
+                                        "work_order_events",
+                                        "video_analyses",
+                                    ],
+                                },
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            ),
+                        ),
+                    )
                 connection.execute(
                     "UPDATE schema_version SET version=?,applied_at=? WHERE singleton=1",
-                    (SCHEMA_VERSION, _now()),
+                    (self.target_schema_version, _now()),
                 )
 
     def _migrate_case_nodes_v01(self, connection: sqlite3.Connection) -> None:
@@ -273,7 +372,7 @@ class EvidenceDatabase:
             (
                 MIGRATION_ID,
                 1,
-                SCHEMA_VERSION,
+                2,
                 _now(),
                 json.dumps(
                     {
@@ -422,6 +521,17 @@ class EvidenceDatabase:
                 "SELECT * FROM review_events WHERE case_id=? ORDER BY created_at,review_id",
                 (case_id,),
             ).fetchall()
+            logistics = connection.execute(
+                "SELECT * FROM case_logistics_nodes WHERE case_id=? ORDER BY event_time,node_id",
+                (case_id,),
+            ).fetchall()
+            risk = connection.execute(
+                "SELECT * FROM risk_assessments WHERE case_id=?", (case_id,)
+            ).fetchone()
+            work_orders = connection.execute(
+                "SELECT * FROM work_orders WHERE case_id=? ORDER BY created_at,work_order_id",
+                (case_id,),
+            ).fetchall()
         result["nodes"] = [dict(row) for row in nodes]
         result["detections"] = [
             {**dict(row), "bbox": json.loads(row["bbox_json"])} for row in detections
@@ -439,6 +549,15 @@ class EvidenceDatabase:
         )
         result["report"] = dict(report) if report else None
         result["reviews"] = [dict(row) for row in reviews]
+        result["logistics_nodes"] = [dict(row) for row in logistics]
+        result["risk"] = (
+            {**dict(risk), "result": json.loads(risk["result_json"])} if risk else None
+        )
+        result["work_orders"] = []
+        for row in work_orders:
+            order = dict(row)
+            order["events"] = self.work_order_history(order["work_order_id"])
+            result["work_orders"].append(order)
         return result
 
     def store_analysis(
@@ -588,3 +707,348 @@ class EvidenceDatabase:
         if row is None:
             raise KeyError(case_id)
         return dict(row)
+
+    def replace_logistics_nodes(
+        self, case_id: str, nodes: list[dict[str, Any]], imported_at: str
+    ) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM cases WHERE case_id=?", (case_id,)
+                ).fetchone()
+                is None
+            ):
+                raise KeyError(case_id)
+            connection.execute(
+                "DELETE FROM case_logistics_nodes WHERE case_id=?", (case_id,)
+            )
+            for node in nodes:
+                connection.execute(
+                    """INSERT INTO case_logistics_nodes
+                    (case_id,package_alias,node_id,node_type,event_time,location_alias,
+                     device_alias,status,notes,imported_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        case_id,
+                        node["package_alias"],
+                        node["node_id"],
+                        node["node_type"],
+                        node["event_time"],
+                        node["location_alias"],
+                        node["device_alias"],
+                        node["status"],
+                        node.get("notes", ""),
+                        imported_at,
+                    ),
+                )
+        return self.list_logistics_nodes(case_id)
+
+    def list_logistics_nodes(self, case_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM cases WHERE case_id=?", (case_id,)
+                ).fetchone()
+                is None
+            ):
+                raise KeyError(case_id)
+            rows = connection.execute(
+                "SELECT * FROM case_logistics_nodes WHERE case_id=? ORDER BY event_time,node_id",
+                (case_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def store_risk(
+        self, case_id: str, created_at: str, result: dict[str, Any]
+    ) -> dict[str, Any]:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT OR REPLACE INTO risk_assessments
+                (case_id,created_at,risk_score,risk_level,result_json)
+                VALUES(?,?,?,?,?)""",
+                (
+                    case_id,
+                    created_at,
+                    result["risk_score"],
+                    result["risk_level"],
+                    json.dumps(result, ensure_ascii=False, sort_keys=True),
+                ),
+            )
+        return result
+
+    def risk_for(self, case_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM risk_assessments WHERE case_id=?", (case_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(case_id)
+        return {**dict(row), "result": json.loads(row["result_json"])}
+
+    def create_work_order(
+        self, order: dict[str, Any], event: dict[str, Any]
+    ) -> dict[str, Any]:
+        with self.connect() as connection:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM cases WHERE case_id=?", (order["case_id"],)
+                ).fetchone()
+                is None
+            ):
+                raise KeyError(order["case_id"])
+            connection.execute(
+                """INSERT INTO work_orders
+                (work_order_id,case_id,title,current_state,assigned_alias,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?)""",
+                (
+                    order["work_order_id"],
+                    order["case_id"],
+                    order["title"],
+                    order["current_state"],
+                    order.get("assigned_alias"),
+                    order["created_at"],
+                    order["updated_at"],
+                ),
+            )
+            self._insert_work_order_event(connection, event)
+        return self.work_order_for(order["work_order_id"])
+
+    @staticmethod
+    def _insert_work_order_event(
+        connection: sqlite3.Connection, event: dict[str, Any]
+    ) -> None:
+        fields = (
+            "event_id",
+            "work_order_id",
+            "event_type",
+            "previous_state",
+            "current_state",
+            "actor_alias",
+            "note",
+            "evidence_request",
+            "created_at",
+            "payload_sha256",
+        )
+        connection.execute(
+            f"INSERT INTO work_order_events ({','.join(fields)}) VALUES ({','.join('?' for _ in fields)})",
+            [event.get(field) for field in fields],
+        )
+
+    def add_work_order_event(
+        self,
+        work_order_id: str,
+        event: dict[str, Any],
+        *,
+        state: str,
+        assigned_alias: str | None,
+        updated_at: str,
+    ) -> dict[str, Any]:
+        with self.connect() as connection:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM work_orders WHERE work_order_id=?", (work_order_id,)
+                ).fetchone()
+                is None
+            ):
+                raise KeyError(work_order_id)
+            self._insert_work_order_event(connection, event)
+            connection.execute(
+                """UPDATE work_orders
+                SET current_state=?,assigned_alias=?,updated_at=?
+                WHERE work_order_id=?""",
+                (state, assigned_alias, updated_at, work_order_id),
+            )
+        return self.work_order_for(work_order_id)
+
+    def work_order_for(self, work_order_id: str) -> dict[str, Any]:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM work_orders WHERE work_order_id=?", (work_order_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(work_order_id)
+        result = dict(row)
+        result["events"] = self.work_order_history(work_order_id)
+        return result
+
+    def list_work_orders(self, case_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM cases WHERE case_id=?", (case_id,)
+                ).fetchone()
+                is None
+            ):
+                raise KeyError(case_id)
+            rows = connection.execute(
+                "SELECT * FROM work_orders WHERE case_id=? ORDER BY created_at,work_order_id",
+                (case_id,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            order = dict(row)
+            order["events"] = self.work_order_history(order["work_order_id"])
+            result.append(order)
+        return result
+
+    def work_order_history(self, work_order_id: str) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM work_order_events
+                WHERE work_order_id=? ORDER BY created_at,event_id""",
+                (work_order_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def store_video_analysis(
+        self,
+        analysis_id: str,
+        created_at: str,
+        source_sha256: str,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO video_analyses
+                (analysis_id,created_at,source_sha256,result_json) VALUES(?,?,?,?)""",
+                (
+                    analysis_id,
+                    created_at,
+                    source_sha256,
+                    json.dumps(result, ensure_ascii=False),
+                ),
+            )
+        return result
+
+    def dashboard_summary(self) -> dict[str, Any]:
+        """Compute dashboard values from SQLite, never from hard-coded demo values."""
+        with self.connect() as connection:
+
+            def scalar(query: str) -> int:
+                return int(connection.execute(query).fetchone()[0] or 0)
+
+            case_count = scalar("SELECT COUNT(*) FROM cases")
+            abnormal = scalar(
+                """SELECT COUNT(*) FROM analysis_results
+                WHERE conclusion_code NOT IN ('NO_ABNORMALITY_OBSERVED','MANUAL_REVIEW_REQUIRED')"""
+            )
+            review_pending = scalar(
+                """SELECT COUNT(DISTINCT a.case_id) FROM analysis_results a
+                WHERE a.conclusion_code <> 'NO_ABNORMALITY_OBSERVED'
+                AND NOT EXISTS (
+                    SELECT 1 FROM review_events r
+                    WHERE r.case_id=a.case_id AND r.review_status IN ('CONFIRMED','REJECTED')
+                )"""
+            )
+            work_order_count = scalar("SELECT COUNT(*) FROM work_orders")
+            resolved = scalar(
+                "SELECT COUNT(*) FROM work_orders WHERE current_state='RESOLVED'"
+            )
+            machine_rows = connection.execute(
+                "SELECT class_code,COUNT(*) AS count FROM detections GROUP BY class_code"
+            ).fetchall()
+            human_rows = connection.execute(
+                """SELECT review_class,COUNT(*) AS count FROM review_events
+                WHERE review_class IN ('D01','D02','D03','D04','D05')
+                GROUP BY review_class"""
+            ).fetchall()
+            interval_rows = connection.execute(
+                """SELECT COALESCE(first_abnormal_interval,'NONE') label,COUNT(*) count
+                FROM analysis_results GROUP BY label"""
+            ).fetchall()
+            surface_rows = connection.execute(
+                "SELECT surface label,COUNT(*) count FROM case_nodes GROUP BY surface"
+            ).fetchall()
+            evidence_rows = connection.execute(
+                "SELECT evidence_level label,COUNT(*) count FROM analysis_results GROUP BY evidence_level"
+            ).fetchall()
+            risk_rows = connection.execute(
+                "SELECT risk_level label,COUNT(*) count FROM risk_assessments GROUP BY risk_level"
+            ).fetchall()
+            analysis_json = connection.execute(
+                "SELECT result_json FROM analysis_results"
+            ).fetchall()
+        times = []
+        for row in analysis_json:
+            try:
+                payload = json.loads(row["result_json"])
+                value = payload.get("timing_ms", {}).get("total")
+                if value is not None:
+                    times.append(float(value))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                continue
+        return {
+            "source": "SQLite",
+            "case_count": case_count,
+            "abnormal_case_count": abnormal,
+            "review_pending_count": review_pending,
+            "work_order_count": work_order_count,
+            "resolved_work_order_count": resolved,
+            "damage_distribution": {
+                "machine": {
+                    code: next(
+                        (
+                            row["count"]
+                            for row in machine_rows
+                            if row["class_code"] == code
+                        ),
+                        0,
+                    )
+                    for code in ("D02", "D03")
+                },
+                "human": {
+                    code: next(
+                        (
+                            row["count"]
+                            for row in human_rows
+                            if row["review_class"] == code
+                        ),
+                        0,
+                    )
+                    for code in ("D01", "D02", "D03", "D04", "D05")
+                },
+            },
+            "first_abnormal_interval_distribution": {
+                row["label"]: row["count"] for row in interval_rows
+            },
+            "surface_distribution": {
+                row["label"]: row["count"] for row in surface_rows
+            },
+            "evidence_level_distribution": {
+                row["label"]: row["count"] for row in evidence_rows
+            },
+            "risk_level_distribution": {
+                row["label"]: row["count"] for row in risk_rows
+            },
+            "average_analyze_time_ms": round(sum(times) / len(times), 3)
+            if times
+            else None,
+        }
+
+    def dashboard_trends(self) -> dict[str, Any]:
+        with self.connect() as connection:
+            cases = connection.execute(
+                "SELECT substr(created_at,1,10) day,COUNT(*) count FROM cases GROUP BY day ORDER BY day"
+            ).fetchall()
+            abnormal = connection.execute(
+                """SELECT substr(created_at,1,10) day,COUNT(*) count FROM analysis_results
+                WHERE conclusion_code NOT IN ('NO_ABNORMALITY_OBSERVED','MANUAL_REVIEW_REQUIRED')
+                GROUP BY day ORDER BY day"""
+            ).fetchall()
+            reviews = connection.execute(
+                "SELECT substr(created_at,1,10) day,COUNT(*) count FROM review_events GROUP BY day ORDER BY day"
+            ).fetchall()
+            orders = connection.execute(
+                "SELECT substr(created_at,1,10) day,COUNT(*) count FROM work_orders GROUP BY day ORDER BY day"
+            ).fetchall()
+
+        def series(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+            return [{"date": row["day"], "count": row["count"]} for row in rows]
+
+        return {
+            "source": "SQLite",
+            "cases": series(cases),
+            "abnormal_cases": series(abnormal),
+            "reviews": series(reviews),
+            "work_orders": series(orders),
+        }
