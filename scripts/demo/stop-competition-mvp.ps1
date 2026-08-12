@@ -1,27 +1,20 @@
-﻿$ErrorActionPreference = 'Stop'
-$runtime = (Resolve-Path 'E:\JianZhengData\runtime\mvp-v0.2').Path
-$pidFile = Join-Path $runtime 'logs\competition-mvp-v0.2.pid'
+$ErrorActionPreference = 'Stop'
+$runtime = (Resolve-Path 'E:\JianZhengData\runtime\competition-rc-v1.0').Path
+$pidFile = Join-Path $runtime 'logs\competition-rc-v1.0.pid'
 if (-not (Test-Path -LiteralPath $pidFile)) {
-    Write-Host '未找到 v0.2 PID 文件；没有执行进程终止。' -ForegroundColor Yellow
+    Write-Host 'RC PID file not found; nothing to stop.' -ForegroundColor Yellow
     exit 0
 }
 $resolvedPid = (Resolve-Path -LiteralPath $pidFile).Path
-if (-not $resolvedPid.StartsWith($runtime, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw 'PID 文件不在 v0.2 runtime 内，拒绝操作。'
-}
+if (-not $resolvedPid.StartsWith($runtime, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'PID file is outside RC runtime.' }
 $processId = [int](Get-Content -LiteralPath $resolvedPid -Raw).Trim()
 $process = Get-CimInstance Win32_Process -Filter "ProcessId=$processId" -ErrorAction SilentlyContinue
 if ($process) {
     $command = [string]$process.CommandLine
-    if ($command -notmatch 'uvicorn' -or $command -notmatch 'app\.backend\.main:app') {
-        throw "PID $processId 不是件证 Uvicorn 进程，拒绝终止。"
-    }
+    if ($command -notmatch 'uvicorn' -or $command -notmatch 'app\.backend\.main:app') { throw "PID $processId is not the JianZheng Uvicorn process." }
     Stop-Process -Id $processId -Force
-    for ($attempt = 0; $attempt -lt 20; $attempt++) {
-        if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) { break }
-        Start-Sleep -Milliseconds 250
-    }
-    if (Get-Process -Id $processId -ErrorAction SilentlyContinue) { throw '服务停止超时。' }
-    Write-Host "已停止件证 Competition MVP v0.2（PID $processId）。" -ForegroundColor Green
-} else { Write-Host "PID $processId 已不存在。" -ForegroundColor Yellow }
+    for ($attempt = 0; $attempt -lt 20; $attempt++) { if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Milliseconds 250 }
+    if (Get-Process -Id $processId -ErrorAction SilentlyContinue) { throw 'Server stop timed out.' }
+    Write-Host "Stopped JianZheng Competition RC v1.0 (PID $processId)." -ForegroundColor Green
+} else { Write-Host "PID $processId no longer exists." -ForegroundColor Yellow }
 Remove-Item -LiteralPath $resolvedPid -Force
