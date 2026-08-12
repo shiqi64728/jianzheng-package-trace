@@ -1,0 +1,17 @@
+{
+  "pipeline_version": "competition-rc-v1.1",
+  "active_model_registry": "E:/JianZhengData/models/active/detector-v0.1.json",
+  "runtime_preference": "registry",
+  "detector_confidence": 0.25,
+  "change_config": "E:/Artificial-intelegence-training/configs/runtime/change-detection-v0.2.json",
+  "database_path": "E:/JianZhengData/runtime/competition-rc-v1.1/jianzheng.db",
+  "bootstrap_database_from": "E:/JianZhengData/runtime/competition-rc-v1.0/jianzheng.db",
+  "runtime_root": "E:/JianZhengData/runtime/competition-rc-v1.1",
+  "auto_warmup": true,
+  "real_world_calibration_status": "PENDING_EXTERNAL_DATA",
+  "max_upload_bytes": 12582912,
+  "max_video_upload_bytes": 104857600,
+  "allowed_extensions": [".jpg", ".jpeg", ".png", ".webp"],
+  "allowed_mime_types": ["image/jpeg", "image/png", "image/webp"],
+  "cors_origins": ["http://127.0.0.1:8000", "http://localhost:8000"]
+}
