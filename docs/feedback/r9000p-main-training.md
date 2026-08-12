@@ -2083,3 +2083,76 @@ dataset lock 及其他历史资产内容没有改变，该已解释工具副作�
 
 本轮完成后不建议继续大规模代码开发。除非出现严重真实场景失败、比赛规则变化或核心 bug，
 工作应转向真实校准数据补充、比赛录屏、作品文本、PPT、答辩和彩排。
+
+## Detector Optimization Goal Mode v2.0
+
+### baseline
+
+本轮基于 `origin/main=a33ee7d175e4d856bc46280516a3d7106f2cd83d`，开始回归 `372/372 PASS`。正式 active 为 YOLO26n@960：val P/R/mAP50/mAP50-95 `0.358709/0.261359/0.221814/0.094648`；D02 AP `0.040010`，D03 AP `0.149285`。
+
+### data diagnosis
+
+11,304 个 bbox 中 near-zero 0、短边小于 4px 3、截边 295、异常 aspect ratio 83、重复/越界 0；376 个仅按几何规则标记为 `label_concern`，没有直接改人工标签。D02 数量虽多但细微、低对比和背景相似性强，数量不平衡不是唯一原因。
+
+### D02 audit
+
+审计全部 1,865 个 val D02 GT：SUBTLE 476、SMALL 274、MEDIUM 686、LARGE 374、BACKGROUND_AMBIGUITY 2、LABEL_CONCERN 53。D02 的主要问题是细微程度、像素尺度与纸箱纹理混淆，而不是 bbox 数量不足。
+
+### small-object audit
+
+D02 最小四分位 failure 为 `204/248=82.258%`，中位尺寸约 `27×49.875px@960`；D03 最小四分位为 `22/37=59.459%`，中位尺寸约 `27×36px@960`。这支持 object-centric crop 假设，但后续实验说明仅靠重采样不能解决域和标签难度。
+
+### background audit
+
+active n960 在 val 的 40 个高置信未匹配预测中，确定性外观代理分类为：纸箱纹理 23、折痕 3、阴影 2、胶带 4、其他 8；人工复核仍是必要步骤。
+
+### near duplicates
+
+v0.1 的 711 张图中 exact cross-split duplicate 为 0，perceptual train→val pair 为 3，判为 suspected leakage；没有访问 test prediction。派生 train 排除对应 3 个源后，v0.2 的 cross-split audit 为 0 exact / 0 perceptual。
+
+### derived dataset
+
+建立 `E:\JianZhengData\training\detect-d02-d03-v0.2`：611 个去泄漏基础 train image、79 个 hard-example copy、344 个带 2.5× context 的几何标签 crop，共 1,034 个 train image；active-model hard-negative prediction 103。val/test 内容 SHA 与 v0.1 完全相同。另建立诊断性 v0.3：仅一源一张 D02 crop（103 张），无 hard-example copy，共 714 个 train image；val/test 同样不变。所有 crop 保留 source image、bbox、coordinates 和 SHA。
+
+### EXP-01...EXP-06
+
+1. EXP-01 YOLO26s@640：val AP `0.102231`、D02 `0.039505`、D03 `0.164956`、Recall `0.299039`；最高 overall，但 D02 AP 略降，`TRADEOFF`。
+2. EXP-02 YOLO26n@960 + v0.2：AP `0.090926`、D02 `0.036678`；`REJECT`。
+3. EXP-03 YOLO26n@960 + conservative v0.3：AP `0.095361`、D02 `0.038139`；`TRADEOFF/REJECT`。
+4. EXP-04 YOLO26s@960：97 epochs early-stop；AP `0.084271`、D02 `0.037100`、D03 `0.131442`；`REJECT`。
+5. EXP-05 YOLO26n@960、mosaic=0：AP `0.087638`、D02 `0.032116`；`REJECT`。
+6. EXP-06 active-init、mosaic=0.5：26 epochs early-stop，best epoch 1；AP `0.085430`、D02 `0.035905`；`REJECT`。
+
+每个新配置均先通过 3-epoch smoke；六个正式 run 预算全部使用，没有超预算或重复相同配置。
+
+### Goal levels
+
+Level-1、Level-2、Level-3 均未达到。最终状态为 `BEST_EFFORT_BUDGET_EXHAUSTED`，不再开启第三轮模型搜索。
+
+### winner selection
+
+预算耗尽后按最高 overall val AP 选择 EXP-01 作为 final val winner。相对 active val：overall AP `+8.012%`、Recall `+14.417%`、D03 AP `+10.498%`，但 D02 AP `-1.261%`。该 tradeoff 在 tracker 和答辩材料中明确披露。
+
+### test lock
+
+候选 SHA `83bf8f7fdc29837af19ef2c9be4f30dd9d5175deaa37142d7ed6c0242378c1ee`、val evidence、dataset lock SHA、选择原因和时间先写入 `E:\JianZhengData\runtime\detector-goal-v2.0\evidence\final-test-lock-v2.0.json`。锁以 exclusive create 建立；再次执行会拒绝。
+
+### final test
+
+test 只访问一次。overall P/R/mAP50/AP `0.335742/0.223156/0.185351/0.075155`；D02 P/R/AP50/AP `0.259568/0.166311/0.121838/0.034843`；D03 `0.411917/0.280000/0.248865/0.115467`。没有根据 test 继续训练或改阈值。
+
+### promotion
+
+overall AP 未达到 `0.095`，D02 AP 未达到 `0.050`；D03 non-catastrophic 与 1.75× latency 检查通过。最终为 `KEEP_CURRENT_ACTIVE`，不是 promotion，也不是 strong promotion。
+
+### active model
+
+正式 active 未替换：`d02-d03-yolo26n-imgsz960-v0.1`，SHA `2dd857412b63df66d1273b326dc51afaed895da1d360c97e184762c882181a97`。没有创建 `d02-d03-detector-v2.0` release 或 `detector-v2.0.json`，也不重复导出 ONNX。
+
+### Competition RC regression
+
+因为 active model 与 registry 均未改变，模型替换触发的 RC 全链路回归不适用；最终全量 unittest 继续覆盖 health、model info、warmup、Demo C/D、risk、report、video、work order 和 dashboard 的既有回归。
+
+### known limitations
+
+最大剩余问题是公开数据到真实驿站的域差异、细微/极小 D02、纹理背景假阳性与 3 个历史 near-duplicate。D01/D04/D05 继续采用 `OPEN_SET_DETECTION + HUMAN_REVIEW`。下一阶段应补充真实同包裹 N1/N2/N3 多表面序列、人工复核 D02/重复组并建立独立 calibration split，而不是无限调参。
